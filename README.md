@@ -1,9 +1,18 @@
 # WikiSkill
 
+> **🚧 Work in progress / 作成中**
+> This project is under active construction and experimental. CLI options, file formats and prompts may change without
+> notice, results have **not** been validated against the paper, and it is not ready for production use.
+> 本プロジェクトは作成中の実験的なものです。CLIオプション・ファイル形式・プロンプトは予告なく変わることがあり、
+> 論文の結果との一致も検証していません。本番利用には向きません。
+>
+> **Use at your own risk / 利用は自己責任で** – see [Copyright and disclaimer](#copyright-and-disclaimer).
+
 An unofficial TypeScript implementation of the framework described in
 [**WikiSkill: Compiling Agent Experience into Persistent Knowledge for Skill Evolution**](https://arxiv.org/abs/2608.27454)
 (Tang, Rashtchian, Ferng, Tomkins, Juan, Vu; arXiv:2608.27454, Aug 2026).
 It is **not** the authors' code (none has been released); it is rebuilt from the paper's text and appendices.
+The idea belongs to the paper's authors; see [Credits](#credits-and-original-ideas).
 
 An agent's trial and error is compiled into a persistent **wiki** of failure modes and strategies, and that wiki guides
 the evolution of **skills** (`SKILL.md` procedures). A skill edit is kept only if it improves a validation score.
@@ -107,6 +116,34 @@ paper's ALFWorld case study.
 
 `npm test` – 19 tests with a mock LLM and a local mock server; no network or API calls.
 
-## License
+## Credits and original ideas
 
-[MIT](LICENSE). The paper is licensed CC BY 4.0; the prompts here are adapted from its Appendix E.
+This is my own implementation, but the idea behind it is not mine. Please read the originals:
+
+- **WikiSkill** – L. Tang, C. Rashtchian, C.-S. Ferng, A. Tomkins, D.-C. Juan, T. Vu.
+  *WikiSkill: Compiling Agent Experience into Persistent Knowledge for Skill Evolution.* arXiv:2608.27454, 2026.
+  [Abstract](https://arxiv.org/abs/2608.27454) · [HTML](https://arxiv.org/html/2608.27454) ·
+  [PDF](https://arxiv.org/pdf/2608.27454) (CC BY 4.0)
+- Related work the paper compares against or builds on:
+  - Trace2Skill – Ni et al., [arXiv:2603.25158](https://arxiv.org/abs/2603.25158)
+  - EvoSkill – Alzubi et al., [arXiv:2603.02766](https://arxiv.org/abs/2603.02766)
+  - SkillOpt – Yang et al., [arXiv:2605.23904](https://arxiv.org/abs/2605.23904)
+  - SoK: Agentic Skills – Jiang et al., [arXiv:2602.20867](https://arxiv.org/abs/2602.20867)
+  - Andrej Karpathy, [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) (GitHub Gist) – the wiki idea the paper cites
+  - Anthropic, [A complete guide to building skills for Claude](https://claude.com/blog/complete-guide-to-building-skills-for-claude) – the `SKILL.md` skill format
+
+The Wiki Maintainer and Skill Proposer prompts here are adapted from the paper's Appendix E. Names and trademarks
+belong to their owners; this project is not affiliated with or endorsed by the paper's authors, Google, or Anthropic.
+
+## Copyright and disclaimer
+
+Copyright (c) 2026 HalkPapa. The code in this repository is my own work and is released under the [MIT License](LICENSE);
+the paper itself is licensed CC BY 4.0 by its authors.
+
+**No warranty, and responsibility lies with the user.** The software is provided "as is". You are responsible for how
+you use it, including the cost of LLM calls, any commands run through `--agent-tools`, the data you feed into it
+(`raw/`, `wiki/` and `skills/` are written to disk and may be committed), and any decision based on its output.
+The author accepts no liability for damages or losses arising from its use.
+
+著作権は作者(HalkPapa)にありますが、本ソフトウェアは無保証で提供します。利用に伴う費用・データの取り扱い・
+実行結果の利用などの責任は、各自が負うものとします。作者は利用による損害について責任を負いません。

@@ -1,7 +1,7 @@
 {
   "name": "wikiskill",
   "version": "0.1.0",
-  "description": "Evolve agent skills from execution traces via a persistent wiki (after arXiv:2608.27454)",
+  "description": "[Work in progress] Unofficial implementation of WikiSkill (arXiv:2608.27454): evolve agent skills from execution traces via a persistent wiki",
   "type": "module",
   "bin": { "wikiskill": "dist/src/cli.js" },
   "scripts": {
