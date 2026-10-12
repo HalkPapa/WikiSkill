@@ -1,7 +1,8 @@
 # Inference-agent prompts of the paper (Appendix E.1)
 
-Transcribed from the HTML version of arXiv:2608.27454 (CC BY 4.0), where punctuation was spaced out by the page
-renderer; line breaks and punctuation here are reconstructed. **Check them against the PDF before reporting numbers.**
+Taken verbatim from the `lstlisting` blocks of Appendix E.1 in the LaTeX source of arXiv:2608.27454 (CC BY 4.0),
+extracted and compared character by character (only a final newline is added). The paper's wording, punctuation and
+line breaks are preserved.
 `{skill_section}` is where the evolved skills go. The paper does not show how that section is rendered; this tool
 fills it with an "## Available Skills" block.
 

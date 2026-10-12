@@ -41,10 +41,12 @@ Follows the paper's loop, layout, Appendix C sampling and Appendix E.2 / E.3 pro
 - Proposer: `read_file` / `finish` are Claude Code's Read tool and the final JSON reply; traces are read at
   `raw/iter-NN/<task_id>.json` instead of a `traces/` alias. "Read at least 4 traces" is enforced from the
   transcript with a single reminder, then the proposal is accepted anyway.
-- Wiki ablations: the paper does not say exactly what "no wiki access" means. Here the proposer works in a copy
-  holding only `raw/` and `skills/` (so it also loses `skill-impact.md`); the agent variant copies `wiki/` into its
-  workspace for every rollout (training, validation and test), not only training.
-- Statistics: one-sided paired bootstrap of the evolved skills against the no-skill baseline (1,000 resamples, seeded);
+- Wiki ablations (Table 3, §5.1): as in the paper, "proposer without wiki" also removes the Wiki Maintainer, so no
+  knowledge accumulates; the paper's 63.7 → 48.7 is the Gemini-3.5-Flash average over four benchmarks (not ALFWorld).
+  The paper does not say how the proposer's access is removed; here it works in a copy holding only `raw/` and
+  `skills/` (so it also loses `skill-impact.md`). The agent variant gets `wiki/` in its workspace during training
+  rollouts only, as in the paper.
+- Statistics: the paper does not say whether its paired bootstrap is one- or two-sided; this tool uses a one-sided paired bootstrap of the evolved skills against the no-skill baseline (1,000 resamples, seeded);
   no tie grouping across several methods, since there are no other methods.
 - Test evaluation is run once at the end, from the final skill set; the number of runs, iterations and split sizes are
   user-chosen (the paper's are in its Table 6 / Appendix B).

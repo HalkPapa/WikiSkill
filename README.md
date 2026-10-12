@@ -11,7 +11,7 @@
 An unofficial TypeScript implementation of the framework described in
 [**WikiSkill: Compiling Agent Experience into Persistent Knowledge for Skill Evolution**](https://arxiv.org/abs/2608.27454)
 (Tang, Rashtchian, Ferng, Tomkins, Juan, Vu; arXiv:2608.27454, Aug 2026).
-It is **not** the authors' code (none has been released); it is rebuilt from the paper's text and appendices.
+It is **not** the authors' code (I found no official release); it is rebuilt from the paper's text and appendices.
 The idea belongs to the paper's authors; see [Credits](#credits-and-original-ideas).
 
 An agent's trial and error is compiled into a persistent **wiki** of failure modes and strategies, and that wiki guides
@@ -67,14 +67,14 @@ node dist/src/cli.js evolve --tasks examples/tasks-hidden-rule.jsonl --out runs/
 | `--infer-model <m>` | model for the task-solving agent |
 | `--infer-backend claude\|openai` | `openai` = OpenAI-compatible server such as vLLM (text only); needs `--base-url`, `--infer-model` |
 | `--agent-tools "Read,Bash(python3 *)"` | Claude Code tools for the task agent (default none) |
-| `--proposer-no-wiki` | ablation: hide the wiki from the skill proposer |
-| `--inference-wiki` | ablation: let the task agent read the wiki |
+| `--proposer-no-wiki` | ablation (paper Table 3): the skill proposer has no wiki access and the wiki maintainer is removed too |
+| `--inference-wiki` | ablation: the task agent may read the wiki during training rollouts (not during validation/test, as in the paper) |
 | `--scorer exact\|contains` | built-in answer matching (default `exact`) |
 | `--scorer-cmd "<cmd>"` | external grader instead (see [Plugging in a grader](#plugging-in-a-grader)) |
 | `--task-desc "<text>"` | completes "an expert agent that solves …" in the prompts |
 
 With a test split, the final skills and a no-skill baseline are scored on it, and a paired bootstrap
-(1,000 resamples, one-sided, p < 0.05) compares them. Results are written to `report.json`.
+(1,000 resamples, p < 0.05; the paper does not say whether its test is one- or two-sided, this tool uses one-sided) compares them. Results are written to `report.json`.
 
 ## Evaluating and transferring skills (`eval`)
 

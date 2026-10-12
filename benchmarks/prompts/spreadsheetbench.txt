@@ -12,9 +12,13 @@ You need to solve the given spreadsheet manipulation question, which contains th
 - output_path: The absolute path where you must save the modified spreadsheet.
 
 ## CRITICAL RESTRICTIONS
+
 You can ONLY read and write files within the **working_directory**. Any attempt to access files outside this directory will fail.
+
 - **Allowed paths**: working_directory (and its subdirectories)
 - **Read from**: spreadsheet_path (inside working_directory)
 - **Write to**: output_path (inside working_directory)
+
 Do NOT create files outside the working_directory. Use the exact absolute paths provided.
+
 You have access to a bash tool that can execute any shell command.

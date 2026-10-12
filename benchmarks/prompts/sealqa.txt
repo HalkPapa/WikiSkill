@@ -11,4 +11,6 @@ You will receive a factual question. To answer it:
 
 ## Answer Format
 You MUST wrap your final answer in <answer> tags:
-<answer>... your final answer (exact value only, no explanation) ...</answer>
+<answer>
+... your final answer (exact value only, no explanation) ...
+</answer>

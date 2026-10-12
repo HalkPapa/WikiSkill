@@ -68,25 +68,37 @@ test('runs > 1: independent run-N directories and averaged test result', async (
   assert.equal(r.meanBaselineVal, 0);
 });
 
-test('ablations: proposer without wiki, inference agent with wiki', async () => {
-  const seen: { propose?: string[]; inferTools?: string[]; inferDirs?: string[] } = {};
-  const out = await tmp();
+test('ablations follow the paper: no-wiki proposer also drops the Wiki Maintainer; agent reads the wiki in training only', async () => {
+  // (1) proposer without wiki: workspace holds only raw/ and skills/, and the Wiki Maintainer is never called
+  const roles: string[] = [];
+  let proposeDir: string[] | undefined;
+  const out1 = await tmp();
   await evolve({
-    ...base,
-    outDir: out,
-    proposerSeesWiki: false,
-    inferenceSeesWiki: true,
+    ...base, outDir: out1, proposerSeesWiki: false,
     llm: mock(trick, async (c) => {
-      if (c.role === 'propose') seen.propose = (await readdir(c.cwd!)).sort();
-      if (c.role === 'infer' && !seen.inferTools) {
-        seen.inferTools = c.tools;
-        seen.inferDirs = (await readdir(c.cwd!)).sort();
-      }
+      roles.push(c.role);
+      if (c.role === 'propose') proposeDir = (await readdir(c.cwd!)).sort();
     }),
   });
-  assert.deepEqual(seen.propose, ['raw', 'skills']); // no wiki/ in the proposer's workspace
-  assert.deepEqual(seen.inferTools, ['Read']);
-  assert.ok(seen.inferDirs!.includes('wiki'));
+  assert.deepEqual(proposeDir, ['raw', 'skills']);
+  assert.ok(!roles.includes('wiki'));
+  assert.deepEqual(await readdir(join(out1, 'wiki/patterns')), []); // nothing accumulated
+  assert.equal(JSON.parse(await readFile(join(out1, 'manifest.json'), 'utf8')).options.wiki_maintainer_enabled, false);
+
+  // (2) agent with wiki access: only training rollouts get Read + a wiki/ copy, validation does not
+  const calls: { tools: string[]; wiki: boolean; prompt: string }[] = [];
+  const out2 = await tmp();
+  const named = [...base.tasks.map((t) => ({ ...t, input: `${t.split}-${t.input}` }))];
+  await evolve({
+    ...base, tasks: named, outDir: out2, inferenceSeesWiki: true,
+    llm: mock(trick, async (c) => {
+      if (c.role === 'infer') calls.push({ tools: c.tools ?? [], wiki: (await readdir(c.cwd!)).includes('wiki'), prompt: c.prompt });
+    }),
+  });
+  const training = calls.filter((c) => c.prompt.startsWith('train'));
+  const evaluation = calls.filter((c) => !c.prompt.startsWith('train'));
+  assert.ok(training.length > 0 && training.every((c) => c.wiki && c.tools.includes('Read')));
+  assert.ok(evaluation.length > 0 && evaluation.every((c) => !c.wiki && c.tools.length === 0));
 });
 
 test('default: inference agent has no tools and no wiki; agentTools + bundled resources reach its workspace', async () => {

@@ -28,8 +28,9 @@
         "concurrency": { "type": "integer" },
         "task_desc": { "type": ["string", "null"] },
         "agent_tools": { "type": "array", "items": { "type": "string" } },
-        "proposer_sees_wiki": { "type": "boolean" },
-        "inference_sees_wiki": { "type": "boolean" },
+        "proposer_sees_wiki": { "type": "boolean", "description": "false = the paper's no-wiki ablation: the proposer has no wiki access and the Wiki Maintainer is removed." },
+        "inference_sees_wiki": { "type": "boolean", "description": "true = the paper's ablation where the task agent may read the wiki during TRAINING rollouts only." },
+        "wiki_maintainer_enabled": { "type": "boolean", "description": "Added after the first publication of schema_version 1 (optional): false when the Wiki Maintainer was removed." },
         "resume": { "type": "boolean" }
       }
     },

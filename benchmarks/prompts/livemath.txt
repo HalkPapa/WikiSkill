@@ -7,4 +7,6 @@ You will receive one mathematics multiple-choice question and its answer choices
 
 ## Answer Format
 Think step by step, then provide your final answer inside <answer>...</answer> tags. Inside the tags, output only the single choice label, such as A or C.
-Example: <answer>B</answer>
+
+Example:
+<answer>B</answer>

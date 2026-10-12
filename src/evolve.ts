@@ -31,9 +31,12 @@ export interface EvolveOptions {
   agentPrompt?: string;
   /** MCP config file exposing the benchmark environment to the agent as tools. */
   agentMcpConfig?: string;
-  /** Ablation (paper §5.1): hide the wiki from the Skill Proposer. Default true = proposer sees it. */
+  /**
+   * Ablation (paper §5.1, Table 3): with `false` the Skill Proposer has no wiki access and, as in the paper, the
+   * Wiki Maintainer is removed too, so no knowledge accumulates across iterations. Default true.
+   */
   proposerSeesWiki?: boolean;
-  /** Ablation (paper §5.1): let the inference agent read the wiki. Default false, as in the paper. */
+  /** Ablation (paper §5.1): the inference agent may read the wiki during *training* rollouts. Default false. */
   inferenceSeesWiki?: boolean;
   /** Continue a previous run in outDir (load its skills, wiki and iteration numbering). */
   resume?: boolean;
@@ -126,6 +129,7 @@ export async function evolve(o: EvolveOptions): Promise<EvolveResult> {
       uses_mcp: o.agentMcpConfig !== undefined,
       proposer_sees_wiki: o.proposerSeesWiki ?? true,
       inference_sees_wiki: o.inferenceSeesWiki ?? false,
+      wiki_maintainer_enabled: o.proposerSeesWiki ?? true,
       resume: !!o.resume,
     },
     split_sizes: { train: train.length, val: val.length, test: test.length },
@@ -153,6 +157,8 @@ export async function evolve(o: EvolveOptions): Promise<EvolveResult> {
     skills: SkillSet,
     iteration: number,
     tag?: { split: 'val' | 'test'; condition: string },
+    /** Training rollouts only: the wiki ablation gives the agent wiki access during these, not during evaluation. */
+    wikiDir?: string,
   ): Promise<Trace[]> => {
     const traces = await mapLimit(tasks, o.concurrency ?? 4, (t) =>
       runTask(o.llm, t, {
@@ -164,7 +170,7 @@ export async function evolve(o: EvolveOptions): Promise<EvolveResult> {
         agentTools: o.agentTools,
         promptTemplate: o.agentPrompt,
         mcpConfig: o.agentMcpConfig,
-        wikiDir: o.inferenceSeesWiki ? store.path('wiki') : undefined,
+        wikiDir,
         onPrompt: async (sha, text) => {
           if (seenPrompts.has(sha)) return;
           seenPrompts.add(sha);
@@ -189,11 +195,12 @@ export async function evolve(o: EvolveOptions): Promise<EvolveResult> {
 
     for (let k = offset + 1; k <= offset + o.iterations && best < 1; k++) {
       const batch = o.trainSample ? train.slice(0, o.trainSample) : train;
-      const traces = await rollouts(batch, skills, k);
+      const traces = await rollouts(batch, skills, k, undefined, o.inferenceSeesWiki ? store.path('wiki') : undefined);
       for (const t of traces) await store.writeTrace(t);
       log(`iter ${k}: train ${traces.filter((t) => t.correct).length}/${traces.length}`);
 
-      log(`iter ${k}: wiki ${await maintainWiki(o.llm, store, traces, k)}`);
+      if (o.proposerSeesWiki ?? true) log(`iter ${k}: wiki ${await maintainWiki(o.llm, store, traces, k)}`);
+      else log(`iter ${k}: wiki maintainer removed (proposer-no-wiki ablation)`);
 
       const proposal = await propose(o.llm, store, skills, traces, k, {
         taskDesc: o.taskDesc,
