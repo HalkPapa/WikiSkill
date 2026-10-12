@@ -1,0 +1,3 @@
+## iter 1
+Iteration 1: 5/5 tasks FAILED on 'generate internal member ID' task type. Root cause: agent has no explicit algorithm and defaults to naive FirstInitial+LastInitial+FullYear guess (DK1985, EW1990, MENDEZ1978, YT2001, OP1969) without enumerating/testing alternative hypotheses. Deep analysis of expected answers (KOI85D, WAT90E, MEN78C, TAN01Y, PET69O) reveals the true rule: LASTNAME[:3].upper() + last-2-digits-of-birth-year + FIRSTNAME[0].upper(), consistent across all 5 examples. Created new pattern 'member-id-generation-wrong-convention' documenting this failure mode and the derived correct formula, plus general advice to enumerate multiple candidate ID conventions and validate against examples rather than committing to the first 'obvious' guess.
+

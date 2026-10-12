@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "status": "completed",
+  "run": "run-1",
+  "started_at": "2026-10-12T03:17:10.009Z",
+  "quality": {
+    "agent_errors": 0,
+    "grader_failures": 0
+  },
+  "finished_at": "2026-10-12T03:19:36.653Z",
+  "environment": {
+    "tool": {
+      "name": "wikiskill",
+      "version": "0.1.0",
+      "git_commit": "bec503f814a8f770584ddb9b9f5e6e94a1192adc",
+      "git_dirty": false
+    },
+    "runtime": {
+      "node": "v22.22.2",
+      "claude_cli": "2.1.207 (Claude Code)"
+    },
+    "models": {
+      "task_agent": "haiku",
+      "task_agent_backend": "claude",
+      "wiki_maintainer_and_skill_proposer": "sonnet"
+    },
+    "tasks_file": {
+      "path": "examples/tasks-hidden-rule.jsonl",
+      "sha256": "a739cb1332458df6ad9d3b52e1d352258460465ebcb320f9919ce8d4abed3944",
+      "count": 14
+    },
+    "scorer_command": null,
+    "agent_invocation": {
+      "command": "claude -p --output-format stream-json --verbose --no-session-persistence --disable-slash-commands --strict-mcp-config --setting-sources project --tools <agent tools> --system-prompt <prompt> --model <model>",
+      "system_prompt": "replaces the default prompt (not appended); archived under results/prompts/<sha256>.txt",
+      "user_message": "the task's input, verbatim ({workspace} replaced by the agent's working directory)",
+      "extra_context": "Claude Code adds session context (current date; account email, masked as [email] in stored logs) to the model context",
+      "sampling": "temperature and other generation parameters are not set by this tool"
+    },
+    "agent_prompt_file": null,
+    "agent_mcp_config": null
+  },
+  "options": {
+    "iterations": 3,
+    "scorer": "exact",
+    "val_ratio": 0.4,
+    "test_ratio": 0,
+    "train_sample": null,
+    "concurrency": 4,
+    "task_desc": "member ID generation tasks",
+    "agent_tools": [],
+    "agent_prompt_sha256": null,
+    "uses_mcp": false,
+    "proposer_sees_wiki": true,
+    "inference_sees_wiki": false,
+    "wiki_maintainer_enabled": true,
+    "resume": false
+  },
+  "split_sizes": {
+    "train": 6,
+    "val": 4,
+    "test": 4
+  },
+  "skills": {
+    "names": [
+      "member-id-naming-convention"
+    ],
+    "bundle_sha256": "9fee34860d51a947a6bce8bd641e406496d422dbc85ed06ebaf5097b68c0adfb",
+    "per_skill": {
+      "member-id-naming-convention": "05cb7d635f524435b2e9f00b5b337dfa8813b826c3d1fc115662390db3e697f4"
+    }
+  },
+  "answer_format": "The agent ends its reply with <answer>…</answer>; the text inside the tags is the answer.",
+  "files_sha256": {
+    "predictions": "17cd7198cf2b59fd6d77b670e33e52b7c25a292b877ebe4b694d7b20a27e7e61",
+    "tasks": "5c2f7d7f34df05df28a7211481177cf055c8a271411095121aba8223038bfadc",
+    "splits": "9e819bc045fe319012d13ebf953c62449b812d058c1fa49bc6e10741ce23ccb3"
+  },
+  "guarantees": {
+    "test_split_used_during_evolution": false,
+    "wiki_hidden_from_task_agent": true
+  },
+  "files": {
+    "predictions": "results/predictions.jsonl",
+    "prompts": "results/prompts/<system_prompt_sha256>.txt",
+    "tasks": "tasks.jsonl",
+    "splits": "splits.json",
+    "report": "report.json",
+    "skills": "skills/",
+    "traces": "raw/",
+    "wiki": "wiki/"
+  }
+}
