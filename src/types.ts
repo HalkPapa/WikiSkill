@@ -5,6 +5,12 @@ export interface Task {
   input: string;
   expected: string;
   split?: Split;
+  /**
+   * Directory whose contents are copied into the agent's working directory before the run (input files for
+   * spreadsheet or document tasks). `{workspace}` in `input` is replaced by that directory's absolute path.
+   * In tasks.jsonl it is a path relative to the tasks file.
+   */
+  workspace?: string;
 }
 
 export interface SkillFiles {
@@ -38,6 +44,8 @@ export interface LlmCall {
   tools?: string[];
   /** Working directory; tools can only see files under it. */
   cwd?: string;
+  /** MCP server config file (benchmark environments such as a search API or a simulator exposed as tools). */
+  mcpConfig?: string;
 }
 /** A reply is the final text, or the final text plus the full execution transcript. */
 export type LlmReply = string | { text: string; transcript: string };

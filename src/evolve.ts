@@ -6,7 +6,7 @@ import { runTask, type ScoreFn } from './infer.js';
 import { maintainWiki } from './wiki.js';
 import { applyProposal, propose } from './propose.js';
 import { pairedBootstrap, type BootstrapResult } from './stats.js';
-import { SCHEMA_VERSION, predictionRow, skillsDigest, snakeKeys } from './handoff.js';
+import { SCHEMA_VERSION, predictionRow, sha256, skillsDigest, snakeKeys } from './handoff.js';
 import { mapLimit, unifiedDiff } from './util.js';
 
 export interface EvolveOptions {
@@ -27,6 +27,10 @@ export interface EvolveOptions {
   taskDesc?: string;
   /** Environment tools for the inference agent, e.g. ["Read", "Bash(python3 *)"]. Default: none. */
   agentTools?: string[];
+  /** Replaces the generic agent system prompt; must contain `{skill_section}` (e.g. benchmarks/prompts/*.txt). */
+  agentPrompt?: string;
+  /** MCP config file exposing the benchmark environment to the agent as tools. */
+  agentMcpConfig?: string;
   /** Ablation (paper §5.1): hide the wiki from the Skill Proposer. Default true = proposer sees it. */
   proposerSeesWiki?: boolean;
   /** Ablation (paper §5.1): let the inference agent read the wiki. Default false, as in the paper. */
@@ -118,6 +122,8 @@ export async function evolve(o: EvolveOptions): Promise<EvolveResult> {
       concurrency: o.concurrency ?? 4,
       task_desc: o.taskDesc ?? null,
       agent_tools: o.agentTools ?? [],
+      agent_prompt_sha256: o.agentPrompt === undefined ? null : sha256(o.agentPrompt),
+      agent_mcp_config: o.agentMcpConfig ?? null,
       proposer_sees_wiki: o.proposerSeesWiki ?? true,
       inference_sees_wiki: o.inferenceSeesWiki ?? false,
       resume: !!o.resume,
@@ -156,6 +162,8 @@ export async function evolve(o: EvolveOptions): Promise<EvolveResult> {
         iteration,
         taskDesc: o.taskDesc,
         agentTools: o.agentTools,
+        promptTemplate: o.agentPrompt,
+        mcpConfig: o.agentMcpConfig,
         wikiDir: o.inferenceSeesWiki ? store.path('wiki') : undefined,
         onPrompt: async (sha, text) => {
           if (seenPrompts.has(sha)) return;

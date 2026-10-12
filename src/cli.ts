@@ -2,7 +2,8 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { parseArgs } from 'node:util';
 import { evaluateSkillSets } from './evaluate.js';
@@ -65,19 +66,26 @@ common options
   --infer-model <m>      model for the task-solving agent
   --infer-backend claude|openai   openai = OpenAI-compatible server such as vLLM (text only)
   --base-url <url>       e.g. http://localhost:8000/v1      --api-key-env <VAR>  (default OPENAI_API_KEY)
-  --agent-tools "<specs>"  comma-separated Claude Code tools for the task agent, e.g. "Read,Bash(python3 *)".
-                         NOT a real sandbox: allowed Bash patterns run on this machine.
+  --agent-tools "<specs>"  comma-separated Claude Code tools for the task agent, e.g. "Read,Bash(python3 *)",
+                         "mcp__env__lookup". NOT a real sandbox: allowed Bash patterns run on this machine.
+  --agent-prompt <file>  agent system prompt template containing {skill_section} (see benchmarks/prompts/)
+  --agent-mcp-config <file>  MCP servers that expose a benchmark environment to the agent as tools
 
-tasks.jsonl: one {"id","input","expected"[,"split":"train"|"val"|"test"]} object per line.`;
+tasks.jsonl: one {"id","input","expected"[,"split":"train"|"val"|"test"][,"workspace":"<dir>"]} object per line.
+  "workspace" is a directory (relative to the tasks file) copied into the agent's working directory; {workspace} in
+  "input" becomes that directory's path, and a --scorer-cmd grader finds the agent's files in $WIKISKILL_WORKSPACE.`;
 
 async function loadTasks(path: string): Promise<Task[]> {
+  const base = dirname(resolve(path));
   return (await readFile(path, 'utf8'))
     .split('\n')
     .filter((l) => l.trim())
     .map((l, i) => {
       const t = JSON.parse(l) as Task;
       if (!t.id || t.input === undefined || t.expected === undefined) throw new Error(`${path} line ${i + 1}: need id, input, expected`);
-      return { ...t, id: String(t.id), expected: String(t.expected) };
+      const workspace = t.workspace === undefined ? undefined : resolve(base, t.workspace);
+      if (workspace !== undefined && !existsSync(workspace)) throw new Error(`${path} line ${i + 1}: workspace ${workspace} does not exist`);
+      return { ...t, id: String(t.id), expected: String(t.expected), ...(workspace !== undefined ? { workspace } : {}) };
     });
 }
 
@@ -114,6 +122,8 @@ async function main() {
       'train-sample': { type: 'string' },
       'task-desc': { type: 'string' },
       'agent-tools': { type: 'string' },
+      'agent-prompt': { type: 'string' },
+      'agent-mcp-config': { type: 'string' },
       'proposer-no-wiki': { type: 'boolean', default: false },
       'inference-wiki': { type: 'boolean', default: false },
     },
@@ -169,6 +179,8 @@ async function main() {
     ? openAiCompatible({ baseUrl: values['base-url']!, model: values['infer-model']!, apiKey: process.env[values['api-key-env']!] })
     : claudeCli({ model: values['infer-model'] ?? values.model });
   const llm: Llm = routeLlm(inference, meta);
+  const agentPrompt = values['agent-prompt'] ? await readFile(values['agent-prompt'], 'utf8') : undefined;
+  if (agentPrompt !== undefined && !agentPrompt.includes('{skill_section}')) throw new Error(`${values['agent-prompt']} must contain {skill_section}`);
   const common = {
     llm,
     scorer: values.scorer as Scorer,
@@ -177,6 +189,8 @@ async function main() {
     concurrency: Number(values.concurrency),
     taskDesc: values['task-desc'],
     agentTools,
+    agentPrompt,
+    agentMcpConfig: values['agent-mcp-config'],
     log,
   };
   const sh = promisify(execFile);
@@ -192,6 +206,7 @@ async function main() {
     },
     tasks_file: { path: values.tasks, sha256: createHash('sha256').update(tasksText).digest('hex'), count: tasks.length },
     scorer_command: values['scorer-cmd'] ?? null,
+    agent_prompt_file: values['agent-prompt'] ?? null,
   };
   const valRatio = Number(values['val-ratio']);
   const testRatio = Number(values['test-ratio']);

@@ -12,6 +12,8 @@ export interface PromptOptions {
   hasWorkspace?: boolean;
   /** Ablation: the agent may read the wiki under wiki/ (the paper's default is that it may not). */
   wikiAccess?: boolean;
+  /** Prompt template with `{skill_section}` (and optionally `{task_desc}`), e.g. the paper's Appendix E.1 prompts. */
+  template?: string;
 }
 
 /** Inference-agent system prompt, shaped like the paper's Appendix E.1 (`{skill_section}` + answer format). */
@@ -31,6 +33,13 @@ export function buildSystem(skills: SkillSet, o: PromptOptions | string = {}): s
   const wiki = opts.wikiAccess
     ? '## Knowledge Base\n\nA wiki of patterns observed in earlier attempts is in wiki/ (start with wiki/index.md). Read the pages relevant to the task before answering.'
     : '';
+  if (opts.template !== undefined) {
+    const section = [skillSection, wiki].filter(Boolean).join('\n\n');
+    return opts.template
+      .replaceAll('{skill_section}', () => section)
+      .replaceAll('{task_desc}', () => opts.taskDesc ?? 'the given tasks')
+      .trim();
+  }
   return [
     `You are an expert agent that solves ${opts.taskDesc ?? 'the given tasks'}.`,
     skillSection,
@@ -59,7 +68,12 @@ export function score(answer: string | null, expected: string, scorer: Scorer): 
 }
 
 /** Custom correctness check (e.g. a benchmark-specific grader). Overrides the built-in `scorer` when given. */
-export type ScoreFn = (answer: string | null, task: Task, extra?: { output: string }) => boolean | Promise<boolean>;
+export type ScoreFn = (
+  answer: string | null,
+  task: Task,
+  /** `output`: the agent's execution log. `workspace`: its working directory, still present while grading. */
+  extra?: { output: string; workspace?: string },
+) => boolean | Promise<boolean>;
 
 export interface Rollout {
   skills: SkillSet;
@@ -71,32 +85,39 @@ export interface Rollout {
   agentTools?: string[];
   /** Ablation: directory (a run's wiki/) copied into the agent's workspace and readable by it. */
   wikiDir?: string;
+  /** Replaces the generic system prompt (see PromptOptions.template). */
+  promptTemplate?: string;
+  /** MCP config file for the agent's tools. */
+  mcpConfig?: string;
   /** Called with the system prompt text and its SHA-256 for every rollout (to archive the exact prompts). */
   onPrompt?: (sha256: string, text: string) => void | Promise<void>;
 }
 
 /**
  * Runs one task with the skills injected into the system prompt. By default the agent has no tools and
- * cannot see the wiki. The workspace is a fresh temp dir that also holds skills/<name>/ (incl. bundled files).
+ * cannot see the wiki. The workspace is a fresh temp dir holding the task's own files (`task.workspace`) and
+ * skills/<name>/ (incl. bundled files); it is removed after grading.
  */
 export async function runTask(llm: Llm, task: Task, r: Rollout): Promise<Trace> {
   const cwd = await mkdtemp(join(tmpdir(), 'wikiskill-infer-'));
   try {
     const tools = [...new Set([...(r.agentTools ?? []), ...(r.wikiDir ? ['Read'] : [])])];
+    if (task.workspace) await cp(task.workspace, cwd, { recursive: true });
     if (tools.length > 0) await writeSkillDirs(r.skills, join(cwd, 'skills'));
     if (r.wikiDir) await cp(r.wikiDir, join(cwd, 'wiki'), { recursive: true });
     let text: string;
     let transcript: string;
-    const system = buildSystem(r.skills, { taskDesc: r.taskDesc, hasWorkspace: tools.length > 0, wikiAccess: !!r.wikiDir });
+    const system = buildSystem(r.skills, { taskDesc: r.taskDesc, hasWorkspace: tools.length > 0, wikiAccess: !!r.wikiDir, template: r.promptTemplate });
     const promptSha = sha256(system);
     await r.onPrompt?.(promptSha, system);
     try {
       const reply = await llm({
         role: 'infer',
         system,
-        prompt: task.input,
+        prompt: task.input.replaceAll('{workspace}', cwd),
         tools,
         cwd,
+        mcpConfig: r.mcpConfig,
       });
       text = replyText(reply);
       transcript = replyTranscript(reply);
@@ -111,7 +132,7 @@ export async function runTask(llm: Llm, task: Task, r: Rollout): Promise<Trace> 
       expected: task.expected,
       output: transcript,
       answer,
-      correct: r.scoreFn ? await r.scoreFn(answer, task, { output: transcript }) : score(answer, task.expected, r.scorer),
+      correct: r.scoreFn ? await r.scoreFn(answer, task, { output: transcript, workspace: cwd }) : score(answer, task.expected, r.scorer),
       systemPromptSha256: promptSha,
     };
   } finally {

@@ -14,6 +14,8 @@ export interface EvaluateOptions {
   concurrency?: number;
   taskDesc?: string;
   agentTools?: string[];
+  agentPrompt?: string;
+  agentMcpConfig?: string;
   /** Repeat every rollout this many times and average per task (agent sampling is noisy). Default 1. */
   repeats?: number;
   /** Split name and run label written to prediction rows. */
@@ -59,7 +61,7 @@ export async function evaluateSkillSets(o: EvaluateOptions): Promise<EvaluateRes
     const runs: number[][] = [];
     for (let r = 0; r < repeats; r++) {
       const traces = await mapLimit(o.tasks, o.concurrency ?? 4, (t) =>
-        runTask(o.llm, t, { skills, scorer: o.scorer ?? 'exact', scoreFn: o.scoreFn, iteration: 0, taskDesc: o.taskDesc, agentTools: o.agentTools, onPrompt: (sha, text) => void (prompts[sha] = text) }),
+        runTask(o.llm, t, { skills, scorer: o.scorer ?? 'exact', scoreFn: o.scoreFn, iteration: 0, taskDesc: o.taskDesc, agentTools: o.agentTools, promptTemplate: o.agentPrompt, mcpConfig: o.agentMcpConfig, onPrompt: (sha, text) => void (prompts[sha] = text) }),
       );
       runs.push(traces.map((t) => (t.correct ? 1 : 0)));
       const run = repeats > 1 ? `${o.runLabel ?? 'eval'}-${r + 1}` : o.runLabel ?? 'eval';

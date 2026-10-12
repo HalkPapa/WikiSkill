@@ -63,10 +63,12 @@ export function claudeCli(opts: ClaudeCliOptions = {}): Llm {
         ...(stream ? ['--verbose'] : []),
         '--no-session-persistence',
         '--disable-slash-commands',
-        '--strict-mcp-config',
+        '--strict-mcp-config', // only the MCP servers given by --mcp-config, never the user's own
         '--setting-sources', 'project',
-        '--tools', [...new Set(tools.map(toolName))].join(','),
+        // `--tools` lists built-in tools only; MCP tools are enabled through --allowedTools (and --mcp-config).
+        '--tools', [...new Set(tools.map(toolName).filter((n) => !n.startsWith('mcp__')))].join(','),
       ];
+      if (call.mcpConfig) args.push('--mcp-config', call.mcpConfig);
       if (tools.length > 0) args.push('--allowedTools', ...tools);
       if (call.system) args.push('--system-prompt', call.system);
       if (opts.model) args.push('--model', opts.model);
