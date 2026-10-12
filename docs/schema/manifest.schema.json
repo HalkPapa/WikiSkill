@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/HalkPapa/WikiSkill/docs/schema/manifest.schema.json",
+  "title": "WikiSkill run manifest (schema_version 1)",
+  "description": "manifest.json in a run directory: everything needed to know what produced the results.",
+  "type": "object",
+  "required": ["schema_version", "status", "run", "started_at", "environment", "options", "split_sizes", "skills", "answer_format", "guarantees", "files"],
+  "properties": {
+    "schema_version": { "type": "integer", "minimum": 1 },
+    "status": { "enum": ["running", "completed", "failed"], "description": "A run that stopped without finishing stays `running`." },
+    "run": { "type": "string" },
+    "started_at": { "type": "string", "format": "date-time" },
+    "finished_at": { "type": "string", "format": "date-time" },
+    "error": { "type": "string" },
+    "environment": {
+      "type": "object",
+      "description": "tool {name, version, git_commit, git_dirty}, runtime {node, claude_cli}, models, tasks_file {path, sha256, count}, scorer_command"
+    },
+    "options": {
+      "type": "object",
+      "required": ["iterations", "scorer", "val_ratio", "test_ratio", "concurrency", "agent_tools", "proposer_sees_wiki", "inference_sees_wiki", "resume"],
+      "properties": {
+        "iterations": { "type": "integer" },
+        "scorer": { "type": "string" },
+        "val_ratio": { "type": "number" },
+        "test_ratio": { "type": "number" },
+        "train_sample": { "type": ["integer", "null"] },
+        "concurrency": { "type": "integer" },
+        "task_desc": { "type": ["string", "null"] },
+        "agent_tools": { "type": "array", "items": { "type": "string" } },
+        "proposer_sees_wiki": { "type": "boolean" },
+        "inference_sees_wiki": { "type": "boolean" },
+        "resume": { "type": "boolean" }
+      }
+    },
+    "split_sizes": {
+      "type": "object",
+      "required": ["train", "val", "test"],
+      "properties": { "train": { "type": "integer" }, "val": { "type": "integer" }, "test": { "type": "integer" } }
+    },
+    "skills": {
+      "type": "object",
+      "required": ["names", "bundle_sha256", "per_skill"],
+      "description": "Final skill set (empty while status is `running`). per_skill hashes SKILL.md, PURPOSE.md and bundled files.",
+      "properties": {
+        "names": { "type": "array", "items": { "type": "string" } },
+        "bundle_sha256": { "type": "string" },
+        "per_skill": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+    "answer_format": { "type": "string" },
+    "guarantees": {
+      "type": "object",
+      "required": ["test_split_used_during_evolution", "wiki_hidden_from_task_agent"],
+      "properties": { "test_split_used_during_evolution": { "type": "boolean" }, "wiki_hidden_from_task_agent": { "type": "boolean" } }
+    },
+    "files": { "type": "object", "additionalProperties": { "type": "string" } }
+  },
+  "additionalProperties": true
+}

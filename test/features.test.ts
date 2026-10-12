@@ -54,7 +54,8 @@ test('test split: final evaluation, report.json and paired bootstrap', async () 
   assert.equal(res.test!.evolvedAccuracy, 1);
   assert.ok(res.test!.bootstrap.significant);
   const report = JSON.parse(await readFile(join(out, 'report.json'), 'utf8'));
-  assert.equal(report.test.evolvedAccuracy, 1);
+  assert.equal(report.schema_version, 1);
+  assert.equal(report.test.evolved_accuracy, 1);
 });
 
 test('runs > 1: independent run-N directories and averaged test result', async () => {
@@ -62,7 +63,7 @@ test('runs > 1: independent run-N directories and averaged test result', async (
   const r = await runExperiment({ tasks: [...tasks(3, 'train'), ...tasks(3, 'val'), ...tasks(4, 'test')], iterations: 1, outDir: out, llm: mock(trick), runs: 2 });
   assert.equal(r.runs.length, 2);
   assert.deepEqual((await readdir(out)).sort(), ['report.json', 'run-1', 'run-2']);
-  assert.deepEqual(await readdir(join(out, 'run-2')), ['raw', 'report.json', 'skills', 'wiki']);
+  assert.deepEqual((await readdir(join(out, 'run-2'))).sort(), ['manifest.json', 'raw', 'report.json', 'results', 'skills', 'splits.json', 'wiki']);
   assert.equal(r.test!.meanEvolvedAccuracy, 1);
   assert.equal(r.meanBaselineVal, 0);
 });

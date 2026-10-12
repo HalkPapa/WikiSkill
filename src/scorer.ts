@@ -3,13 +3,13 @@ import type { ScoreFn } from './infer.js';
 
 /**
  * Grades answers with an external command, so benchmark-specific graders (spreadsheet diffs, simulators, …) can plug in.
- * The command (run through `sh -c`) gets one JSON object on stdin: {"id","input","expected","answer"} (answer may be
- * null). It must print `true`/`false`, `1`/`0`, or JSON such as {"correct": true}. Errors and timeouts count as wrong.
+ * The command (run through `sh -c`) gets one JSON object on stdin: {"id","input","expected","answer","output"} (answer
+ * may be null; output is the agent's full execution log). It must print `true`/`false`, `1`/`0`, or JSON such as {"correct": true}. Errors and timeouts count as wrong.
  * The command runs on your machine with your permissions.
  */
 export function commandScorer(cmd: string, opts: { timeoutMs?: number; onError?: (msg: string) => void } = {}): ScoreFn {
   const timeoutMs = opts.timeoutMs ?? 60_000;
-  return (answer, task) =>
+  return (answer, task, extra) =>
     new Promise<boolean>((resolve) => {
       const fail = (why: string) => {
         opts.onError?.(`scorer for ${task.id}: ${why}`);
@@ -31,7 +31,7 @@ export function commandScorer(cmd: string, opts: { timeoutMs?: number; onError?:
         resolve(parseVerdict(out));
       });
       child.stdin.on('error', () => {}); // the command may exit without reading stdin
-      child.stdin.end(JSON.stringify({ id: task.id, input: task.input, expected: task.expected, answer }));
+      child.stdin.end(JSON.stringify({ id: task.id, input: task.input, expected: task.expected, answer, output: extra?.output ?? null }));
     });
 }
 

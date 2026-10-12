@@ -97,6 +97,23 @@ pass `--scorer-cmd "<command>"`. It is run through `sh -c` once per answer, rece
 `{"id","input","expected","answer"}` as JSON on stdin, and prints `true`/`false`, `1`/`0` or `{"correct": true}`.
 A failing command or timeout (60 s) counts as wrong. The command runs on your machine with your permissions.
 
+## Handing results to another team
+
+Final scoring and comparison with external AIs can be done by someone else without re-running anything: a run keeps
+every answer, the full execution log and the exact system prompts, in a versioned format (`schema_version: 1`).
+
+```sh
+node dist/src/cli.js check   --run <run dir>                      # is this run complete and consistent?
+node dist/src/cli.js rescore --predictions <run dir>/results/predictions.jsonl --scorer-cmd "…" [--baseline <condition>]
+```
+
+- `check` verifies the manifest, the task splits, the prediction rows, the archived prompts, the skills' hashes and that
+  the held-out test split was never used during evolution.
+- `rescore` re-grades stored predictions with another scorer (and optionally re-extracts the answers) and compares
+  conditions with a paired bootstrap. Rows for an external AI use the same schema (`condition: "external:<name>"`).
+- Full guide for the receiving team (in Japanese): [`docs/HANDOFF.md`](docs/HANDOFF.md). Schemas:
+  [`docs/schema/`](docs/schema/), sample: [`docs/examples/predictions.sample.jsonl`](docs/examples/predictions.sample.jsonl).
+
 ## Directory layout (as in the paper)
 
 ```
@@ -110,7 +127,11 @@ skills/<name>/
   SKILL.md                  frontmatter + When to Apply / When NOT to Apply / Instructions
   PURPOSE.md                Origin, Patterns Addressed, Evolution History
   …                         optional bundled scripts/resources
-report.json                 validation/test results of the run
+manifest.json               what produced the run: code commit, models, options, task file hash, skill hashes
+splits.json                 task ids per split (train / val / test)
+results/predictions.jsonl   every validation and test rollout (answer, full output, verdict), see docs/HANDOFF.md
+results/prompts/<sha>.txt   the exact system prompts the agent saw
+report.json                 provisional summary of the run
 ```
 
 ## Fidelity to the paper
@@ -138,7 +159,7 @@ paper's ALFWorld case study.
 
 ## Tests
 
-`npm test` – 24 tests with a mock LLM and a local mock server; no network or API calls.
+`npm test` – 33 tests with a mock LLM and a local mock server; no network or API calls.
 
 ## Credits and original ideas
 

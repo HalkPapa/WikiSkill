@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { evolve, type EvolveOptions, type EvolveResult } from './evolve.js';
+import { SCHEMA_VERSION, snakeKeys } from './handoff.js';
 import { pairedBootstrap, type BootstrapResult } from './stats.js';
 
 export interface ExperimentOptions extends EvolveOptions {
@@ -27,7 +28,7 @@ export async function runExperiment(o: ExperimentOptions): Promise<ExperimentRes
   const runs: EvolveResult[] = [];
   for (let r = 1; r <= n; r++) {
     o.log?.(n > 1 ? `=== run ${r}/${n} ===` : 'run');
-    runs.push(await evolve({ ...o, outDir: n > 1 ? join(o.outDir, `run-${r}`) : o.outDir }));
+    runs.push(await evolve({ ...o, runLabel: `run-${r}`, outDir: n > 1 ? join(o.outDir, `run-${r}`) : o.outDir }));
   }
   const result: ExperimentResult = {
     runs,
@@ -49,7 +50,16 @@ export async function runExperiment(o: ExperimentOptions): Promise<ExperimentRes
     await mkdir(o.outDir, { recursive: true });
     await writeFile(
       join(o.outDir, 'report.json'),
-      JSON.stringify({ runs: n, meanBaselineVal: result.meanBaselineVal, meanBestVal: result.meanBestVal, test: result.test }, null, 2),
+      JSON.stringify(
+        {
+          schema_version: SCHEMA_VERSION,
+          runs: n,
+          run_dirs: runs.map((_, i) => `run-${i + 1}`),
+          ...(snakeKeys({ meanBaselineVal: result.meanBaselineVal, meanBestVal: result.meanBestVal, test: result.test }) as object),
+        },
+        null,
+        2,
+      ) + '\n',
     );
   }
   return result;

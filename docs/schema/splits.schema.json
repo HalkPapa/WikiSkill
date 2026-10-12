@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/HalkPapa/WikiSkill/docs/schema/splits.schema.json",
+  "title": "WikiSkill task split assignment (schema_version 1)",
+  "description": "splits.json: which task ids were used for training, validation (gate) and the held-out test.",
+  "type": "object",
+  "required": ["schema_version", "train", "val", "test"],
+  "properties": {
+    "schema_version": { "type": "integer", "minimum": 1 },
+    "train": { "type": "array", "items": { "type": "string" } },
+    "val": { "type": "array", "items": { "type": "string" } },
+    "test": { "type": "array", "items": { "type": "string" } }
+  }
+}

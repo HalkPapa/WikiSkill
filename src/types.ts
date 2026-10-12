@@ -24,6 +24,8 @@ export interface Trace {
   output: string;
   answer: string | null;
   correct: boolean;
+  /** SHA-256 of the system prompt the agent saw (see results/prompts/). */
+  systemPromptSha256?: string;
 }
 
 export type Role = 'infer' | 'wiki' | 'propose';

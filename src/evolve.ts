@@ -6,6 +6,7 @@ import { runTask, type ScoreFn } from './infer.js';
 import { maintainWiki } from './wiki.js';
 import { applyProposal, propose } from './propose.js';
 import { pairedBootstrap, type BootstrapResult } from './stats.js';
+import { SCHEMA_VERSION, predictionRow, skillsDigest, snakeKeys } from './handoff.js';
 import { mapLimit, unifiedDiff } from './util.js';
 
 export interface EvolveOptions {
@@ -34,6 +35,12 @@ export interface EvolveOptions {
   resume?: boolean;
   /** Delete a previous run in outDir and start from S0 = ∅ and an empty wiki. */
   force?: boolean;
+  /** Label stored in every prediction row and the manifest (default "run-1"). */
+  runLabel?: string;
+  /** Free-form facts about the environment (tool version, models, task file hash, …) copied into manifest.json. */
+  runInfo?: Record<string, unknown>;
+  /** Name of the scorer written to prediction rows ("exact", "contains" or "custom"). */
+  scorerLabel?: string;
   log?: (msg: string) => void;
 }
 
@@ -75,6 +82,9 @@ const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.l
 export async function evolve(o: EvolveOptions): Promise<EvolveResult> {
   const log = o.log ?? (() => {});
   const store = new Store(o.outDir);
+  const run = o.runLabel ?? 'run-1';
+  const scorerLabel = o.scorerLabel ?? (o.scoreFn ? 'custom' : o.scorer ?? 'exact');
+  const startedAt = new Date().toISOString();
   if (await store.hasData()) {
     if (o.force) await store.reset();
     else if (!o.resume)
@@ -84,9 +94,61 @@ export async function evolve(o: EvolveOptions): Promise<EvolveResult> {
   const { train, val, test } = splitTasks(o.tasks, o.valRatio ?? 0.4, o.testRatio ?? 0);
   if (train.length === 0 || val.length === 0) throw new Error('need at least one train and one validation task');
   log(`train=${train.length} val=${val.length} test=${test.length}`);
+  await store.writeJson('splits.json', {
+    schema_version: SCHEMA_VERSION,
+    train: train.map((t) => t.id),
+    val: val.map((t) => t.id),
+    test: test.map((t) => t.id),
+  });
 
-  const rollouts = (tasks: Task[], skills: SkillSet, iteration: number): Promise<Trace[]> =>
-    mapLimit(tasks, o.concurrency ?? 4, (t) =>
+  const manifest = (status: 'running' | 'completed' | 'failed', skills: SkillSet, extra: object = {}) => ({
+    schema_version: SCHEMA_VERSION,
+    status,
+    run,
+    started_at: startedAt,
+    ...(status === 'running' ? {} : { finished_at: new Date().toISOString() }),
+    ...extra,
+    environment: o.runInfo ?? {},
+    options: {
+      iterations: o.iterations,
+      scorer: scorerLabel,
+      val_ratio: o.valRatio ?? 0.4,
+      test_ratio: o.testRatio ?? 0,
+      train_sample: o.trainSample ?? null,
+      concurrency: o.concurrency ?? 4,
+      task_desc: o.taskDesc ?? null,
+      agent_tools: o.agentTools ?? [],
+      proposer_sees_wiki: o.proposerSeesWiki ?? true,
+      inference_sees_wiki: o.inferenceSeesWiki ?? false,
+      resume: !!o.resume,
+    },
+    split_sizes: { train: train.length, val: val.length, test: test.length },
+    skills: { names: [...skills.keys()], ...skillsDigest(skills) },
+    answer_format: 'The agent ends its reply with <answer>…</answer>; the text inside the tags is the answer.',
+    guarantees: {
+      test_split_used_during_evolution: false,
+      wiki_hidden_from_task_agent: !o.inferenceSeesWiki,
+    },
+    files: {
+      predictions: 'results/predictions.jsonl',
+      prompts: 'results/prompts/<system_prompt_sha256>.txt',
+      splits: 'splits.json',
+      report: 'report.json',
+      skills: 'skills/',
+      traces: 'raw/',
+      wiki: 'wiki/',
+    },
+  });
+  await store.writeJson('manifest.json', manifest('running', new Map()));
+
+  const seenPrompts = new Set<string>();
+  const rollouts = async (
+    tasks: Task[],
+    skills: SkillSet,
+    iteration: number,
+    tag?: { split: 'val' | 'test'; condition: string },
+  ): Promise<Trace[]> => {
+    const traces = await mapLimit(tasks, o.concurrency ?? 4, (t) =>
       runTask(o.llm, t, {
         skills,
         scorer: o.scorer ?? 'exact',
@@ -95,85 +157,101 @@ export async function evolve(o: EvolveOptions): Promise<EvolveResult> {
         taskDesc: o.taskDesc,
         agentTools: o.agentTools,
         wikiDir: o.inferenceSeesWiki ? store.path('wiki') : undefined,
+        onPrompt: async (sha, text) => {
+          if (seenPrompts.has(sha)) return;
+          seenPrompts.add(sha);
+          await store.writePrompt(sha, text);
+        },
       }),
     );
-  const validate = async (skills: SkillSet, iteration: number) =>
-    mean((await rollouts(val, skills, iteration)).map((t) => (t.correct ? 1 : 0)));
+    if (tag) await store.appendPredictions(traces.map((t) => predictionRow(t, { run, scorer: scorerLabel, ...tag })));
+    return traces;
+  };
+  const validate = async (skills: SkillSet, iteration: number, condition: string) =>
+    mean((await rollouts(val, skills, iteration, { split: 'val', condition })).map((t) => (t.correct ? 1 : 0)));
 
-  let skills: SkillSet = o.resume ? await store.readSkills() : new Map();
-  const offset = o.resume ? await store.lastIteration() : 0;
-  const baselineVal = await validate(new Map(), 0);
-  let best = skills.size === 0 ? baselineVal : await validate(skills, offset);
-  log(`baseline val=${baselineVal.toFixed(3)}${skills.size ? `, resumed val=${best.toFixed(3)} (${skills.size} skill(s), after iter ${offset})` : ''}`);
-  const history: EvolveResult['history'] = [];
+  try {
+    let skills: SkillSet = o.resume ? await store.readSkills() : new Map();
+    const offset = o.resume ? await store.lastIteration() : 0;
+    if (o.resume) await store.dropPredictions((r) => r.split === 'test' || (r.split === 'val' && (r.condition === 'no-skills' || r.condition === 'resumed-skills')));
+    const baselineVal = await validate(new Map(), 0, 'no-skills');
+    let best = skills.size === 0 ? baselineVal : await validate(skills, offset, 'resumed-skills');
+    log(`baseline val=${baselineVal.toFixed(3)}${skills.size ? `, resumed val=${best.toFixed(3)} (${skills.size} skill(s), after iter ${offset})` : ''}`);
+    const history: EvolveResult['history'] = [];
 
-  for (let k = offset + 1; k <= offset + o.iterations && best < 1; k++) {
-    const batch = o.trainSample ? train.slice(0, o.trainSample) : train;
-    const traces = await rollouts(batch, skills, k);
-    for (const t of traces) await store.writeTrace(t);
-    log(`iter ${k}: train ${traces.filter((t) => t.correct).length}/${traces.length}`);
+    for (let k = offset + 1; k <= offset + o.iterations && best < 1; k++) {
+      const batch = o.trainSample ? train.slice(0, o.trainSample) : train;
+      const traces = await rollouts(batch, skills, k);
+      for (const t of traces) await store.writeTrace(t);
+      log(`iter ${k}: train ${traces.filter((t) => t.correct).length}/${traces.length}`);
 
-    log(`iter ${k}: wiki ${await maintainWiki(o.llm, store, traces, k)}`);
+      log(`iter ${k}: wiki ${await maintainWiki(o.llm, store, traces, k)}`);
 
-    const proposal = await propose(o.llm, store, skills, traces, k, {
-      taskDesc: o.taskDesc,
-      useWiki: o.proposerSeesWiki ?? true,
-      log: (m) => log(`iter ${k}: ${m}`),
-    });
-    if (!proposal || proposal.action === 'no_action') {
-      history.push({ iteration: k, outcome: 'no-proposal', valScore: best });
-      await store.appendImpact(`## iter ${k}\n${proposal ? 'Proposer chose no_action.' : 'No valid proposal (unparseable reply).'}`);
-      log(`iter ${k}: ${proposal ? 'no_action' : 'no valid proposal'}`);
-      continue;
-    }
-    const candidate = applyProposal(skills, proposal, k);
-    const before = skills.get(proposal.name)?.skillMd ?? '';
-    if (!candidate) {
-      history.push({ iteration: k, outcome: 'invalid', valScore: best });
+      const proposal = await propose(o.llm, store, skills, traces, k, {
+        taskDesc: o.taskDesc,
+        useWiki: o.proposerSeesWiki ?? true,
+        log: (m) => log(`iter ${k}: ${m}`),
+      });
+      if (!proposal || proposal.action === 'no_action') {
+        history.push({ iteration: k, outcome: 'no-proposal', valScore: best });
+        await store.appendImpact(`## iter ${k}\n${proposal ? 'Proposer chose no_action.' : 'No valid proposal (unparseable reply).'}`);
+        log(`iter ${k}: ${proposal ? 'no_action' : 'no valid proposal'}`);
+        continue;
+      }
+      const candidate = applyProposal(skills, proposal, k);
+      const before = skills.get(proposal.name)?.skillMd ?? '';
+      if (!candidate) {
+        history.push({ iteration: k, outcome: 'invalid', valScore: best });
+        await store.appendImpact(
+          `## iter ${k} — Rejected (invalid edit)\nTarget: ${proposal.name} (${proposal.action})\n` +
+            `\`\`\`json\n${JSON.stringify(proposal, null, 2)}\n\`\`\``,
+        );
+        log(`iter ${k}: invalid ${proposal.action} ${proposal.name}`);
+        continue;
+      }
+      const diff = unifiedDiff(before, candidate.get(proposal.name)!.skillMd, `skills/${proposal.name}/SKILL.md`);
+      const resources = (proposal.resources ?? []).map((r) => r.path);
+      const score = await validate(candidate, k, `candidate:${proposal.name}@iter${k}`);
+      const accepted = score > best; // strict improvement only
       await store.appendImpact(
-        `## iter ${k} — Rejected (invalid edit)\nTarget: ${proposal.name} (${proposal.action})\n` +
-          `\`\`\`json\n${JSON.stringify(proposal, null, 2)}\n\`\`\``,
+        `## iter ${k} — ${accepted ? 'Accepted' : 'Rejected'}\nTarget: ${proposal.name} (${proposal.action})\n` +
+          `Rationale: ${proposal.rationale ?? ''}\nValidation: ${score.toFixed(3)} (best before: ${best.toFixed(3)})\n` +
+          (resources.length ? `Resources: ${resources.join(', ')}\n` : '') +
+          `\n\`\`\`diff\n${diff}\n\`\`\``,
       );
-      log(`iter ${k}: invalid ${proposal.action} ${proposal.name}`);
-      continue;
+      log(`iter ${k}: ${proposal.action} ${proposal.name} val=${score.toFixed(3)} → ${accepted ? 'accepted' : 'rejected'}`);
+      history.push({ iteration: k, outcome: accepted ? 'accepted' : 'rejected', valScore: score });
+      if (accepted) {
+        skills = candidate;
+        best = score;
+        await store.writeSkills(skills);
+      }
     }
-    const diff = unifiedDiff(before, candidate.get(proposal.name)!.skillMd, `skills/${proposal.name}/SKILL.md`);
-    const resources = (proposal.resources ?? []).map((r) => r.path);
-    const score = await validate(candidate, k);
-    const accepted = score > best; // strict improvement only
-    await store.appendImpact(
-      `## iter ${k} — ${accepted ? 'Accepted' : 'Rejected'}\nTarget: ${proposal.name} (${proposal.action})\n` +
-        `Rationale: ${proposal.rationale ?? ''}\nValidation: ${score.toFixed(3)} (best before: ${best.toFixed(3)})\n` +
-        (resources.length ? `Resources: ${resources.join(', ')}\n` : '') +
-        `\n\`\`\`diff\n${diff}\n\`\`\``,
-    );
-    log(`iter ${k}: ${proposal.action} ${proposal.name} val=${score.toFixed(3)} → ${accepted ? 'accepted' : 'rejected'}`);
-    history.push({ iteration: k, outcome: accepted ? 'accepted' : 'rejected', valScore: score });
-    if (accepted) {
-      skills = candidate;
-      best = score;
-      await store.writeSkills(skills);
-    }
-  }
 
-  let testResult: TestResult | undefined;
-  if (test.length > 0) {
-    const base = (await rollouts(test, new Map(), 0)).map((t) => (t.correct ? 1 : 0));
-    const evo = (await rollouts(test, skills, 0)).map((t) => (t.correct ? 1 : 0));
-    testResult = {
-      ids: test.map((t) => t.id),
-      baseline: base,
-      evolved: evo,
-      baselineAccuracy: mean(base),
-      evolvedAccuracy: mean(evo),
-      bootstrap: pairedBootstrap(evo, base),
-    };
-    log(`test: no skills ${testResult.baselineAccuracy.toFixed(3)} → evolved ${testResult.evolvedAccuracy.toFixed(3)} (p=${testResult.bootstrap.p.toFixed(3)})`);
+    let testResult: TestResult | undefined;
+    if (test.length > 0) {
+      const base = (await rollouts(test, new Map(), 0, { split: 'test', condition: 'no-skills' })).map((t) => (t.correct ? 1 : 0));
+      const evo = (await rollouts(test, skills, 0, { split: 'test', condition: 'evolved' })).map((t) => (t.correct ? 1 : 0));
+      testResult = {
+        ids: test.map((t) => t.id),
+        baseline: base,
+        evolved: evo,
+        baselineAccuracy: mean(base),
+        evolvedAccuracy: mean(evo),
+        bootstrap: pairedBootstrap(evo, base),
+      };
+      log(`test: no skills ${testResult.baselineAccuracy.toFixed(3)} → evolved ${testResult.evolvedAccuracy.toFixed(3)} (p=${testResult.bootstrap.p.toFixed(3)})`);
+    }
+    const result: EvolveResult = { skills, baselineVal, bestScore: best, history, test: testResult };
+    await store.writeJson('report.json', {
+      schema_version: SCHEMA_VERSION,
+      run,
+      ...(snakeKeys({ baselineVal, bestVal: best, skills: [...skills.keys()], history, test: testResult }) as object),
+    });
+    await store.writeJson('manifest.json', manifest('completed', skills));
+    return result;
+  } catch (e) {
+    await store.writeJson('manifest.json', manifest('failed', new Map(), { error: (e as Error).message }));
+    throw e;
   }
-  const result: EvolveResult = { skills, baselineVal, bestScore: best, history, test: testResult };
-  await writeFile(
-    store.path('report.json'),
-    JSON.stringify({ baselineVal, bestVal: best, skills: [...skills.keys()], history, test: testResult }, null, 2),
-  );
-  return result;
 }

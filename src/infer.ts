@@ -1,6 +1,7 @@
 import { cp, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { sha256 } from './handoff.js';
 import { writeSkillDirs } from './store.js';
 import type { Llm, Scorer, SkillSet, Task, Trace } from './types.js';
 import { replyText, replyTranscript } from './util.js';
@@ -58,7 +59,7 @@ export function score(answer: string | null, expected: string, scorer: Scorer): 
 }
 
 /** Custom correctness check (e.g. a benchmark-specific grader). Overrides the built-in `scorer` when given. */
-export type ScoreFn = (answer: string | null, task: Task) => boolean | Promise<boolean>;
+export type ScoreFn = (answer: string | null, task: Task, extra?: { output: string }) => boolean | Promise<boolean>;
 
 export interface Rollout {
   skills: SkillSet;
@@ -70,6 +71,8 @@ export interface Rollout {
   agentTools?: string[];
   /** Ablation: directory (a run's wiki/) copied into the agent's workspace and readable by it. */
   wikiDir?: string;
+  /** Called with the system prompt text and its SHA-256 for every rollout (to archive the exact prompts). */
+  onPrompt?: (sha256: string, text: string) => void | Promise<void>;
 }
 
 /**
@@ -84,10 +87,13 @@ export async function runTask(llm: Llm, task: Task, r: Rollout): Promise<Trace> 
     if (r.wikiDir) await cp(r.wikiDir, join(cwd, 'wiki'), { recursive: true });
     let text: string;
     let transcript: string;
+    const system = buildSystem(r.skills, { taskDesc: r.taskDesc, hasWorkspace: tools.length > 0, wikiAccess: !!r.wikiDir });
+    const promptSha = sha256(system);
+    await r.onPrompt?.(promptSha, system);
     try {
       const reply = await llm({
         role: 'infer',
-        system: buildSystem(r.skills, { taskDesc: r.taskDesc, hasWorkspace: tools.length > 0, wikiAccess: !!r.wikiDir }),
+        system,
         prompt: task.input,
         tools,
         cwd,
@@ -105,7 +111,8 @@ export async function runTask(llm: Llm, task: Task, r: Rollout): Promise<Trace> 
       expected: task.expected,
       output: transcript,
       answer,
-      correct: r.scoreFn ? await r.scoreFn(answer, task) : score(answer, task.expected, r.scorer),
+      correct: r.scoreFn ? await r.scoreFn(answer, task, { output: transcript }) : score(answer, task.expected, r.scorer),
+      systemPromptSha256: promptSha,
     };
   } finally {
     await rm(cwd, { recursive: true, force: true });

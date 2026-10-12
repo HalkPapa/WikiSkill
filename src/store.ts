@@ -85,14 +85,42 @@ export class Store {
       (await nonEmpty('raw')) ||
       (await nonEmpty('wiki/patterns')) ||
       (await nonEmpty('skills')) ||
+      (await nonEmpty('results')) ||
+      (await sized('manifest.json')) ||
       (await sized('wiki/skill-impact.md')) ||
       (await sized('wiki/logs.md'))
     );
   }
 
-  /** Deletes raw/, wiki/ and skills/ (a fresh run starts with S0 = ∅ and an empty wiki). */
+  /** Deletes a previous run's files (a fresh run starts with S0 = ∅ and an empty wiki). */
   async reset() {
-    for (const d of ['raw', 'wiki', 'skills']) await rm(this.path(d), { recursive: true, force: true });
+    for (const d of ['raw', 'wiki', 'skills', 'results']) await rm(this.path(d), { recursive: true, force: true });
+    for (const f of ['manifest.json', 'report.json', 'splits.json']) await rm(this.path(f), { force: true });
+  }
+
+  /** Appends rows to results/predictions.jsonl (the hand-off file). */
+  async appendPredictions(rows: object[]) {
+    if (rows.length === 0) return;
+    await mkdir(this.path('results'), { recursive: true });
+    await appendFile(this.path('results', 'predictions.jsonl'), rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
+  }
+
+  /** Removes prediction rows matching `pred` (a resumed run re-scores the test split and the baseline). */
+  async dropPredictions(pred: (row: { split: string; condition: string }) => boolean) {
+    const file = this.path('results', 'predictions.jsonl');
+    const text = await readFile(file, 'utf8').catch(() => '');
+    const kept = text.split('\n').filter((l) => l.trim() && !pred(JSON.parse(l)));
+    await writeFile(file, kept.length ? kept.join('\n') + '\n' : '');
+  }
+
+  /** Archives a system prompt under results/prompts/<sha256>.txt (once). */
+  async writePrompt(sha: string, text: string) {
+    await mkdir(this.path('results', 'prompts'), { recursive: true });
+    await writeFile(this.path('results', 'prompts', `${sha}.txt`), text, { flag: 'w' });
+  }
+
+  async writeJson(rel: string, value: unknown) {
+    await writeFile(this.path(rel), JSON.stringify(value, null, 2) + '\n');
   }
 
   /** Copies a layer directory (e.g. 'wiki', 'raw', 'skills') into another workspace. */
