@@ -15,6 +15,7 @@ import { splitTasks } from './evolve.js';
 import { runExperiment } from './experiment.js';
 import type { ScoreFn } from './infer.js';
 import { claudeCli, openAiCompatible, resolveMcpConfig, routeLlm } from './llm.js';
+import { UsageMeter } from './usage.js';
 import { commandScorer } from './scorer.js';
 import { readSkillDirs } from './store.js';
 import type { Llm, Scorer, Task } from './types.js';
@@ -33,6 +34,8 @@ evolve options
   --out <dir>            run directory holding raw/ wiki/ skills/ … (default: runs/default; must be empty or a previous run)
   --iters <n>            evolution iterations (default 5)
   --runs <n>             independent runs, averaged; each in <out>/run-N (paper: 3; default 1)
+  --run-label run-N      label of a single run; lets you do the runs of an experiment one at a time (e.g. on different
+                         days): --out runs/x/run-2 --run-label run-2, then check/rescore the parent runs/x
   --resume | --force     continue a previous run in <out> | delete it and start over
                          (without either, a non-empty <out> is refused)
   --train-sample <n>     max training tasks per iteration
@@ -74,6 +77,8 @@ common options
   --base-url <url>       e.g. http://localhost:8000/v1      --api-key-env <VAR>  (default OPENAI_API_KEY)
   --agent-tools "<specs>"  comma-separated Claude Code tools for the task agent, e.g. "Read,Bash(python3 *)",
                          "mcp__env__lookup". NOT a real sandbox: allowed Bash patterns run on this machine.
+  --max-cost <usd>       stop before the next call once the claude CLI's reported cost reaches this many USD (in-flight calls
+                         still finish, so it can overshoot a little); continue later with --resume. Costs are list prices.
   --agent-prompt <file>  agent system prompt template containing {skill_section} (see benchmarks/prompts/)
   --agent-mcp-config <file>  MCP servers that expose a benchmark environment to the agent as tools; write server
                          paths as {configdir}/server.mjs (the agent runs in a temp dir, so relative paths would break)
@@ -108,6 +113,12 @@ async function loadTasks(path: string): Promise<Task[]> {
       if (workspace !== undefined && !existsSync(workspace)) throw new Error(`${where}: workspace ${workspace} does not exist`);
       return { ...t, id, expected: String(t.expected), ...(workspace !== undefined ? { workspace } : {}) };
     });
+}
+
+function usageLine(m: UsageMeter) {
+  const s = m.snapshot();
+  const roles = Object.entries(s.by_role).map(([r, u]) => `${r} ${u.calls} calls $${u.usd.toFixed(2)}`).join(', ');
+  return `[wikiskill] usage: ${s.calls} calls, $${s.usd.toFixed(2)} as reported by the claude CLI (${roles || 'none'})`;
 }
 
 async function main() {
@@ -146,6 +157,8 @@ async function main() {
       'train-sample': { type: 'string' },
       'task-desc': { type: 'string' },
       'agent-tools': { type: 'string' },
+      'max-cost': { type: 'string' },
+      'run-label': { type: 'string' },
       'agent-prompt': { type: 'string' },
       'agent-mcp-config': { type: 'string' },
       'proposer-no-wiki': { type: 'boolean', default: false },
@@ -224,10 +237,13 @@ async function main() {
     throw new Error('--infer-backend openai is text-only: it cannot be combined with --agent-tools or --inference-wiki');
   }
   if (openai && (!values['base-url'] || !values['infer-model'])) throw new Error('--infer-backend openai needs --base-url and --infer-model');
-  const meta = claudeCli({ model: values.model });
+  const maxCost = values['max-cost'] === undefined ? undefined : Number(values['max-cost']);
+  if (maxCost !== undefined && !(maxCost > 0)) throw new Error(`--max-cost must be a positive number of USD (got "${values['max-cost']}")`);
+  const meter = new UsageMeter(maxCost);
+  const meta = claudeCli({ model: values.model, meter });
   const inference = openai
     ? openAiCompatible({ baseUrl: values['base-url']!, model: values['infer-model']!, apiKey: process.env[values['api-key-env']!] })
-    : claudeCli({ model: values['infer-model'] ?? values.model });
+    : claudeCli({ model: values['infer-model'] ?? values.model, meter });
   const llm: Llm = routeLlm(inference, meta);
   const agentPrompt = values['agent-prompt'] ? await readFile(values['agent-prompt'], 'utf8') : undefined;
   if (agentPrompt !== undefined && !agentPrompt.includes('{skill_section}')) throw new Error(`${values['agent-prompt']} must contain {skill_section}`);
@@ -306,6 +322,7 @@ async function main() {
       console.error(`warning: ${graderErrors.length} row(s) could not be graded by --scorer-cmd and count as wrong (first: ${graderErrors[0]})`);
       process.exitCode = 1;
     }
+    console.error(usageLine(meter));
     if (values.report) await writeFile(values.report, JSON.stringify({ schema_version: SCHEMA_VERSION, ...(snakeKeys({ ...res, predictions: undefined, prompts: undefined }) as object) }, null, 2) + '\n');
     if (values['predictions-out']) {
       const file = values['predictions-out'];
@@ -323,6 +340,7 @@ async function main() {
     outDir: values.out!,
     iterations: intOption('iters', values.iters, 0),
     runs: intOption('runs', values.runs, 1),
+    singleRunLabel: values['run-label'],
     resume: values.resume,
     force: values.force,
     valRatio,
@@ -331,6 +349,7 @@ async function main() {
     codeDiff,
     trainSample: values['train-sample'] ? intOption('train-sample', values['train-sample'], 1) : undefined,
     graderFailures: () => graderErrors.length,
+    usage: () => meter.snapshot(),
     proposerSeesWiki: !values['proposer-no-wiki'],
     inferenceSeesWiki: values['inference-wiki'],
   });
@@ -338,6 +357,7 @@ async function main() {
     console.error(`warning: ${graderErrors.length} row(s) could not be graded by --scorer-cmd and count as wrong (first: ${graderErrors[0]}); this run will not pass check`);
     process.exitCode = 1;
   }
+  console.error(usageLine(meter));
   console.log(`validation: no skills ${result.meanBaselineVal.toFixed(3)} → best ${result.meanBestVal.toFixed(3)} (mean of ${result.runs.length} run(s))`);
   if (result.test) {
     const t = result.test;

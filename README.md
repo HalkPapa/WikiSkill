@@ -60,6 +60,8 @@ node dist/src/cli.js evolve --tasks examples/tasks-hidden-rule.jsonl --out runs/
 | `--out <dir>` | run directory (default `runs/default`); must be empty or a previous run |
 | `--iters <n>` | iterations (default 5) |
 | `--runs <n>` | independent full runs, averaged; each in `<out>/run-N` (the paper uses 3); needs a clean `--out`, cannot be combined with `--resume` |
+| `--max-cost <usd>` | stop before the next call once the claude CLI's reported cost reaches this (list price, not what a subscription bills); continue with `--resume`. Usage is printed at the end and recorded in `manifest.json` (`usage`) and per row (`cost_usd`) |
+| `--run-label run-N` | label for a single run, so the runs of one experiment can be done one at a time (`--out runs/x/run-2 --run-label run-2`) |
 | `--resume` / `--force` | continue a previous run (loads its skills and wiki) / delete it and start over |
 | `--val-ratio`, `--test-ratio` | shares of unsplit tasks for validation / test (defaults 0.4 / 0) |
 | `--train-sample <n>` | max training tasks per iteration |

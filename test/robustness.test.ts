@@ -276,3 +276,63 @@ test('CLI: a failing external grader or a failing agent makes evolve exit 1 and 
   assert.match(down.stderr, /agent calls failed.*stopping/);
   assert.equal(JSON.parse(await readFile(join(cwd, 'd/manifest.json'), 'utf8')).status, 'failed');
 });
+
+// ---- spending meter and cap ----
+import { parseStream } from '../src/llm.js';
+import { BudgetExceededError, UsageMeter } from '../src/usage.js';
+import { runTask } from '../src/infer.js';
+
+test('UsageMeter totals per role and refuses the next call once the cap is reached', () => {
+  const m = new UsageMeter(0.05);
+  m.add('infer', { costUsd: 0.02, input: 10, output: 5, cacheCreation: 100, cacheRead: 7 });
+  m.add('wiki', { costUsd: 0.03 });
+  const s = m.snapshot();
+  assert.deepEqual([s.calls, s.usd, s.max_usd, s.by_role.infer.calls, s.by_role.wiki.usd, s.cache_creation_tokens], [2, 0.05, 0.05, 1, 0.03, 100]);
+  assert.throws(() => m.assertWithin(), BudgetExceededError);
+  assert.doesNotThrow(() => new UsageMeter().assertWithin()); // no cap: never
+  assert.doesNotThrow(() => new UsageMeter(1).assertWithin());
+});
+
+test('parseStream reads cost and token counts from the result event', () => {
+  const r = parseStream([{ type: 'result', result: 'ok', total_cost_usd: 0.0142, usage: { input_tokens: 9, output_tokens: 96, cache_creation_input_tokens: 6577 } }].map((e) => JSON.stringify(e)).join('\n'));
+  assert.deepEqual(r.usage, { costUsd: 0.0142, input: 9, output: 96, cacheCreation: 6577, cacheRead: undefined });
+});
+
+test('a spending cap is not an agent failure: it propagates out of runTask', async () => {
+  const capped: Llm = async () => {
+    throw new BudgetExceededError('cap reached');
+  };
+  await assert.rejects(runTask(capped, { id: 't', input: 'i', expected: 'e' }, { skills: new Map(), scorer: 'exact', iteration: 0 }), BudgetExceededError);
+});
+
+test('CLI: usage is reported and recorded; --max-cost stops the run, which can then be resumed', async () => {
+  const env = await fakeClaudeEnv();
+  const cwd = await tmp('ws-cost-');
+  const file = await tasksFile([
+    ...[0, 1, 2].map((i) => ({ id: `a${i}`, input: `q${i}`, expected: 'right', split: 'train' })),
+    ...[0, 1].map((i) => ({ id: `v${i}`, input: `q${i}`, expected: 'right', split: 'val' })),
+    ...[0, 1].map((i) => ({ id: `x${i}`, input: `q${i}`, expected: 'right', split: 'test' })),
+  ]);
+  const out = join(cwd, 'ok');
+  const run = cli({ ...env, FAKE_COST: '0.02' }, cwd, 'evolve', '--tasks', file, '--out', out, '--iters', '1', '--concurrency', '1');
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stderr, /\[wikiskill\] usage: \d+ calls, \$\d+\.\d\d as reported by the claude CLI \(.*infer \d+ calls/);
+  const manifest = JSON.parse(await readFile(join(out, 'manifest.json'), 'utf8'));
+  assert.ok(manifest.usage.calls > 5 && manifest.usage.usd > 0.1 && manifest.usage.by_role.infer.calls > 0 && manifest.usage.by_role.wiki.calls === 1);
+  assert.equal(manifest.usage.max_usd, null);
+  const rows = (await readFile(join(out, 'results/predictions.jsonl'), 'utf8')).trim().split('\n').map((l) => JSON.parse(l));
+  assert.ok(rows.every((r) => r.cost_usd === 0.02));
+
+  const capped = join(cwd, 'capped');
+  const stop = cli({ ...env, FAKE_COST: '0.02' }, cwd, 'evolve', '--tasks', file, '--out', capped, '--iters', '2', '--concurrency', '1', '--max-cost', '0.1');
+  assert.equal(stop.status, 1);
+  assert.match(stop.stderr, /spending cap of \$0\.10 reached/);
+  const failed = JSON.parse(await readFile(join(capped, 'manifest.json'), 'utf8'));
+  assert.equal(failed.status, 'failed');
+  assert.equal(failed.usage.max_usd, 0.1);
+  assert.ok(failed.usage.usd >= 0.1 && failed.usage.usd < 0.2); // concurrency 1: at most one call over the cap
+  assert.equal(cli(env, cwd, 'check', '--run', capped).status, 1); // an unfinished run is never hand-over ready
+
+  const bad = cli(env, cwd, 'evolve', '--tasks', file, '--out', join(cwd, 'b'), '--max-cost', '0');
+  assert.match(bad.stderr, /--max-cost must be a positive number of USD/);
+});

@@ -55,6 +55,7 @@
       "description": "Optional. Failures that distort scores: agent calls that failed after a retry, and external-grader calls that failed. Both must be 0 for `wikiskill check` to pass.",
       "properties": { "agent_errors": { "type": "integer" }, "grader_failures": { "type": "integer" } }
     },
+    "usage": { "type": "object", "description": "Optional. Spending reported by the claude CLI during the run: calls, usd (list price), token counts, max_usd (the --max-cost cap or null) and by_role." },
     "first_started_at": { "type": "string", "format": "date-time", "description": "Optional, resumed runs: when the first session started (started_at is the latest session)." },
     "resumed_from_iteration": { "type": "integer", "description": "Optional, resumed runs: the last iteration already done before this session." },
     "files_sha256": {

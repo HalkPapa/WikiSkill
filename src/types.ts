@@ -34,6 +34,8 @@ export interface Trace {
   systemPromptSha256?: string;
   /** Resolved model id that produced the reply (e.g. claude-haiku-4-5-20251001), when known. */
   model?: string;
+  /** Cost in USD of the agent call, as reported by the CLI (list price; not necessarily what is billed). */
+  costUsd?: number;
   /** Set when the agent call itself failed (timeout, rate limit, crash): the verdict is not a real answer. */
   error?: string;
 }
@@ -52,7 +54,7 @@ export interface LlmCall {
   mcpConfig?: string;
 }
 /** A reply is the final text, or the final text plus the full execution transcript. */
-export type LlmReply = string | { text: string; transcript: string; /** Resolved model id reported by the CLI. */ model?: string };
+export type LlmReply = string | { text: string; transcript: string; /** Resolved model id reported by the CLI. */ model?: string; /** Cost in USD as reported by the CLI for this call. */ cost?: number };
 export type Llm = (call: LlmCall) => Promise<LlmReply>;
 
 export type Scorer = 'exact' | 'contains';

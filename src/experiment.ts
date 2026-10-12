@@ -6,6 +6,8 @@ import { SCHEMA_VERSION, snakeKeys } from './handoff.js';
 import { pairedBootstrap, type BootstrapResult } from './stats.js';
 
 export interface ExperimentOptions extends EvolveOptions {
+  /** Label for the run when `runs` is 1 (default "run-1"); lets runs of one experiment be done separately. */
+  singleRunLabel?: string;
   /** Independent full evolution runs (the paper averages 3). With runs > 1 each run gets <outDir>/run-N/. */
   runs?: number;
 }
@@ -40,7 +42,7 @@ export async function runExperiment(o: ExperimentOptions): Promise<ExperimentRes
   }
   for (let r = 1; r <= n; r++) {
     o.log?.(n > 1 ? `=== run ${r}/${n} ===` : 'run');
-    runs.push(await evolve({ ...o, runLabel: `run-${r}`, outDir: n > 1 ? join(o.outDir, `run-${r}`) : o.outDir }));
+    runs.push(await evolve({ ...o, runLabel: n > 1 ? `run-${r}` : (o.singleRunLabel ?? 'run-1'), outDir: n > 1 ? join(o.outDir, `run-${r}`) : o.outDir }));
   }
   const result: ExperimentResult = {
     runs,

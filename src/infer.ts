@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sha256 } from './handoff.js';
 import { writeSkillDirs } from './store.js';
+import { BudgetExceededError } from './usage.js';
 import type { Llm, Scorer, SkillSet, Task, Trace } from './types.js';
 import { replyText, replyTranscript } from './util.js';
 
@@ -125,6 +126,7 @@ export async function runTask(llm: Llm, task: Task, r: Rollout): Promise<Trace> 
     let transcript: string;
     let model: string | undefined;
     let error: string | undefined;
+    let costUsd: number | undefined;
     const system = buildSystem(r.skills, { taskDesc: r.taskDesc, hasWorkspace: tools.length > 0, wikiAccess: !!r.wikiDir, template: r.promptTemplate });
     const promptSha = sha256(system);
     await r.onPrompt?.(promptSha, system);
@@ -141,6 +143,7 @@ export async function runTask(llm: Llm, task: Task, r: Rollout): Promise<Trace> 
           mcpConfig: r.mcpConfig,
         });
       } catch (e) {
+        if (e instanceof BudgetExceededError) throw e; // a spending cap is not an agent failure
         error = (e as Error).message;
       }
     }
@@ -149,6 +152,7 @@ export async function runTask(llm: Llm, task: Task, r: Rollout): Promise<Trace> 
       text = replyText(reply);
       transcript = replyTranscript(reply);
       model = typeof reply === 'string' ? undefined : reply.model;
+      costUsd = typeof reply === 'string' ? undefined : reply.cost;
     } else {
       text = transcript = `[agent error] ${error}`;
     }
@@ -163,6 +167,7 @@ export async function runTask(llm: Llm, task: Task, r: Rollout): Promise<Trace> 
       correct: error ? false : r.scoreFn ? await r.scoreFn(answer, task, { output: transcript, workspace: cwd }) : score(answer, task.expected, r.scorer),
       systemPromptSha256: promptSha,
       ...(model ? { model } : {}),
+      ...(costUsd !== undefined ? { costUsd } : {}),
       ...(error ? { error } : {}),
     };
   } finally {

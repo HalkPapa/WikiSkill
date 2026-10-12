@@ -46,6 +46,8 @@ export interface EvolveOptions {
   runLabel?: string;
   /** Free-form facts about the environment (tool version, models, task file hash, …) copied into manifest.json. */
   runInfo?: Record<string, unknown>;
+  /** Spending so far (from a UsageMeter); recorded in the manifest. */
+  usage?: () => object;
   /** Returns how many external-grader failures happened so far (recorded in the manifest's quality block). */
   graderFailures?: () => number;
   /** `git diff` of the code that produced the run when its tree was dirty; saved as results/code.diff. */
@@ -130,6 +132,7 @@ export async function evolve(o: EvolveOptions): Promise<EvolveResult> {
     started_at: startedAt,
     ...(o.resume ? { first_started_at: previous.first_started_at ?? previous.started_at ?? startedAt, resumed_from_iteration: resumeOffset } : {}),
     quality: { agent_errors: agentErrors, grader_failures: o.graderFailures?.() ?? 0 },
+    ...(o.usage ? { usage: o.usage() } : {}),
     ...(status === 'running' ? {} : { finished_at: new Date().toISOString() }),
     ...extra,
     environment: o.runInfo ?? {},

@@ -44,6 +44,8 @@ export interface PredictionRow {
   model?: string;
   /** When the row was written (ISO 8601; optional). Test rows are written after all gate rollouts. */
   created_at?: string;
+  /** Optional. Cost in USD of the call as reported by the claude CLI (list price). Absent for external rows. */
+  cost_usd?: number;
   /** Optional. Present when the agent call itself failed (after one retry): `correct` is then false but not a real verdict. */
   error?: string;
 }
@@ -72,6 +74,7 @@ export function predictionRow(
     system_prompt_sha256: t.systemPromptSha256 ?? '',
     output: t.output,
     ...(t.model ? { model: t.model } : {}),
+    ...(t.costUsd !== undefined ? { cost_usd: t.costUsd } : {}),
     ...(t.error ? { error: t.error } : {}),
     created_at: new Date().toISOString(),
   };

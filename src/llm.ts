@@ -1,9 +1,12 @@
 import { spawn } from 'node:child_process';
 import { rmSync } from 'node:fs';
 import type { Llm, LlmCall, LlmReply, Role } from './types.js';
+import { UsageMeter, type CallUsage } from './usage.js';
 
 export interface ClaudeCliOptions {
   model?: string;
+  /** Records each call's cost and tokens, and stops the run when its cap is reached. */
+  meter?: UsageMeter;
   bin?: string;
   timeoutMs?: number;
 }
@@ -16,11 +19,24 @@ const redact = (s: string) => s.replace(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g, '[email
 
 const clip = (s: string, n = 4000) => (s.length > n ? s.slice(0, n) + `…[+${s.length - n} chars]` : s);
 
+/** Cost and token counts from a CLI result object (stream-json `result` event or the json output). */
+export function usageOf(ev: any): CallUsage {
+  const u = ev?.usage ?? {};
+  return {
+    costUsd: typeof ev?.total_cost_usd === 'number' ? ev.total_cost_usd : undefined,
+    input: u.input_tokens,
+    output: u.output_tokens,
+    cacheCreation: u.cache_creation_input_tokens,
+    cacheRead: u.cache_read_input_tokens,
+  };
+}
+
 /** Renders `claude --output-format stream-json` events as a readable transcript and extracts the final text. */
-export function parseStream(stdout: string): { text: string; transcript: string; model?: string } {
+export function parseStream(stdout: string): { text: string; transcript: string; model?: string; usage?: CallUsage } {
   const lines: string[] = [];
   let text = '';
   let model: string | undefined;
+  let usage: CallUsage | undefined;
   for (const raw of stdout.split('\n')) {
     if (!raw.trim()) continue;
     let ev: any;
@@ -43,10 +59,13 @@ export function parseStream(stdout: string): { text: string; transcript: string;
           lines.push(`[tool_result] ${clip(c)}`);
         }
       }
-    } else if (ev.type === 'result' && typeof ev.result === 'string') text = ev.result;
+    } else if (ev.type === 'result') {
+      if (typeof ev.result === 'string') text = ev.result;
+      usage = usageOf(ev);
+    }
   }
   if (text.trim()) lines.push(`[final] ${text.trim()}`);
-  return { text: text.trim(), transcript: redact(lines.join('\n')), ...(model ? { model } : {}) };
+  return { text: text.trim(), transcript: redact(lines.join('\n')), ...(model ? { model } : {}), ...(usage ? { usage } : {}) };
 }
 
 /** Roles whose full execution log is recorded (reasoning + tool calls) instead of just the final reply. */
@@ -58,11 +77,16 @@ export function claudeCli(opts: ClaudeCliOptions = {}): Llm {
   const timeoutMs = opts.timeoutMs ?? 10 * 60_000;
   return (call: LlmCall) =>
     new Promise<LlmReply>((resolve, reject) => {
+      try {
+        opts.meter?.assertWithin(); // a spending cap stops the run before the next paid call
+      } catch (e) {
+        return reject(e);
+      }
       const tools = call.tools ?? [];
       const stream = STREAMED.includes(call.role);
       const args = [
         '-p',
-        '--output-format', stream ? 'stream-json' : 'text',
+        '--output-format', stream ? 'stream-json' : 'json',
         ...(stream ? ['--verbose'] : []),
         '--no-session-persistence',
         '--disable-slash-commands',
@@ -89,9 +113,23 @@ export function claudeCli(opts: ClaudeCliOptions = {}): Llm {
       child.on('close', (code) => {
         clearTimeout(timer);
         if (code !== 0) return reject(new Error(`claude exited with ${code}: ${err.trim().slice(0, 500)}`));
-        if (!stream) return resolve(out.trim());
+        if (!stream) {
+          // --output-format json: one result object (or, with some CLI versions, an array of events)
+          let result: any;
+          try {
+            const j = JSON.parse(out);
+            result = Array.isArray(j) ? j.find((e) => e?.type === 'result') : j;
+          } catch {
+            result = undefined;
+          }
+          if (!result || typeof result.result !== 'string') return reject(new Error(`unreadable claude output: ${out.trim().slice(0, 200)}`));
+          const usage = usageOf(result);
+          opts.meter?.add(call.role, usage);
+          return resolve({ text: result.result.trim(), transcript: result.result.trim(), cost: usage.costUsd });
+        }
         const parsed = parseStream(out);
-        resolve({ text: parsed.text, transcript: parsed.transcript || parsed.text, model: parsed.model });
+        opts.meter?.add(call.role, parsed.usage ?? {});
+        resolve({ text: parsed.text, transcript: parsed.transcript || parsed.text, model: parsed.model, cost: parsed.usage?.costUsd });
       });
       child.stdin.end(call.prompt);
     });
