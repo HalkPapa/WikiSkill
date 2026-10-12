@@ -10,6 +10,7 @@ import { parseArgs } from 'node:util';
 import { evaluateSkillSets } from './evaluate.js';
 import { SCHEMA_VERSION, parsePredictions } from './handoff.js';
 import { checkRuns } from './check.js';
+import { makeTasks } from './maketasks.js';
 import { rescore } from './rescore.js';
 import { splitTasks } from './evolve.js';
 import { runExperiment } from './experiment.js';
@@ -29,6 +30,8 @@ const USAGE = `Usage:
   wikiskill rescore --predictions <file.jsonl> [--predictions …] [options]
                                                      re-score stored predictions with another scorer; runs no agent
   wikiskill check  --run <dir> [--run <dir> …]       verify a finished run is consistent before handing it over
+  wikiskill make-tasks --in data.jsonl --input-template "…" --expected <field> (--split-field f | --splits splits.json | --random-split 35/18/124)
+                                                     turn a dataset into tasks.jsonl (see docs/PREPARATION.md)
 
 evolve options
   --out <dir>            run directory holding raw/ wiki/ skills/ … (default: runs/default; must be empty or a previous run)
@@ -49,6 +52,16 @@ eval options
   --repeats <n>          repeat each rollout and average per task (default 1)
   --report <file>        also write the result as JSON
   --predictions-out <file>   write every rollout in the hand-off schema (+ prompts/ beside it); see docs/HANDOFF.md
+
+make-tasks options
+  --in <file>            dataset as JSONL (one object per line) or a JSON array
+  --id-field <f>         field holding the id (default id)
+  --input-template "…"   the agent's input; {field} / {a.b} are replaced (arrays: one item per line)
+  --expected <f|tmpl>    field (or template) with the expected answer
+  --split-field <f>      field whose values are train / val / test (use the split the paper used)
+  --splits <file.json>   {"train":[ids],"val":[ids],"test":[ids]}; ids outside the lists are left out
+  --random-split a/b/c  seeded random train/val/test sizes with --seed N. NOT the paper's split: not a reproduction
+  --tasks-out <file>     where to write tasks.jsonl (default tasks.jsonl)
 
 rescore options
   --predictions <file>   results/predictions.jsonl of a run (repeatable; rows of all files are pooled)
@@ -159,6 +172,14 @@ async function main() {
       'agent-tools': { type: 'string' },
       'max-cost': { type: 'string' },
       'run-label': { type: 'string' },
+      in: { type: 'string' },
+      'id-field': { type: 'string' },
+      'input-template': { type: 'string' },
+      expected: { type: 'string' },
+      'split-field': { type: 'string' },
+      'random-split': { type: 'string' },
+      seed: { type: 'string', default: '1' },
+      'tasks-out': { type: 'string' },
       'agent-prompt': { type: 'string' },
       'agent-mcp-config': { type: 'string' },
       'proposer-no-wiki': { type: 'boolean', default: false },
@@ -170,7 +191,7 @@ async function main() {
     console.log(USAGE);
     return;
   }
-  if (!['evolve', 'eval', 'rescore', 'check'].includes(cmd) || (cmd !== 'rescore' && cmd !== 'check' && !values.tasks)) {
+  if (!['evolve', 'eval', 'rescore', 'check', 'make-tasks'].includes(cmd) || (cmd !== 'rescore' && cmd !== 'check' && cmd !== 'make-tasks' && !values.tasks)) {
     console.error(USAGE);
     process.exit(2);
   }
@@ -183,6 +204,33 @@ async function main() {
   const scorerLabel = scoreFn ? 'custom' : values.scorer!;
   const f = (x: number) => x.toFixed(3);
   const fmtP = (p: number) => (p === 0 ? '<0.001' : f(p)); // bootstrap p has a resolution of 1/1000
+
+  if (cmd === 'make-tasks') {
+    if (!values.in || !values['input-template'] || !values.expected) throw new Error('make-tasks needs --in, --input-template and --expected');
+    const text = await readFile(values.in, 'utf8');
+    const records: Record<string, unknown>[] = text.trimStart().startsWith('[')
+      ? JSON.parse(text)
+      : text.split('\n').filter((l) => l.trim()).map((l, i) => {
+          try {
+            return JSON.parse(l);
+          } catch {
+            throw new Error(`${values.in} line ${i + 1}: not valid JSON`);
+          }
+        });
+    let random;
+    if (values['random-split']) {
+      const m = values['random-split'].match(/^(\d+)\/(\d+)\/(\d+)$/);
+      if (!m) throw new Error('--random-split must look like 35/18/124');
+      random = { train: Number(m[1]), val: Number(m[2]), test: Number(m[3]), seed: intOption('seed', values.seed, 0) };
+    }
+    const splits = values.splits ? JSON.parse(await readFile(values.splits, 'utf8')) : undefined;
+    const made = makeTasks({ records, idField: values['id-field'], inputTemplate: values['input-template'], expected: values.expected, splitField: values['split-field'], splits, random });
+    const outFile = values['tasks-out'] ?? 'tasks.jsonl';
+    await writeFile(outFile, made.tasks.map((t) => JSON.stringify(t)).join('\n') + '\n');
+    for (const w of made.warnings) console.error(`warning: ${w}`);
+    console.log(`wrote ${made.tasks.length} tasks to ${outFile}: train ${made.counts.train}, val ${made.counts.val}, test ${made.counts.test}`);
+    return;
+  }
 
   if (cmd === 'check') {
     if (!values.run?.length) throw new Error('check needs at least one --run <dir>');

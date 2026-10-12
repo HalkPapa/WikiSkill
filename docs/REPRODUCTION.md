@@ -103,6 +103,8 @@
 
 ## 8. 実行例(LiveMath、データ入手後)
 
+> 準備のチェックリストと、ステップバイステップの手順は [`PREPARATION.md`](PREPARATION.md) にあります。
+
 ```sh
 # tasks.jsonl: {"id","input","expected","split"} を train/val/test の件数(35/18/124)で用意
 node dist/src/cli.js evolve --tasks livemath/tasks.jsonl --out runs/livemath-pilot \

@@ -115,6 +115,7 @@ node dist/src/cli.js rescore --predictions <run dir>/results/predictions.jsonl -
   anything produced during evolution. The proposer works in a sandbox copy that holds no validation or test truths.
 - `rescore` re-grades stored predictions with another scorer (and optionally re-extracts the answers) and compares
   conditions with a paired bootstrap. Rows for an external AI use the same schema (`condition: "external:<name>"`).
+- Preparing a reproduction (checklist and step-by-step HOWTOs, in Japanese): [`docs/PREPARATION.md`](docs/PREPARATION.md); plan and decisions: [`docs/REPRODUCTION.md`](docs/REPRODUCTION.md). `make-tasks` turns a dataset into `tasks.jsonl`.
 - Full guide for the receiving team (in Japanese): [`docs/HANDOFF.md`](docs/HANDOFF.md). Schemas:
   [`docs/schema/`](docs/schema/), sample: [`docs/examples/predictions.sample.jsonl`](docs/examples/predictions.sample.jsonl).
 
@@ -163,7 +164,7 @@ paper's ALFWorld case study.
 
 ## Tests
 
-`npm test` – 61 tests with a mock LLM, a local mock server and an offline stand-in for the `claude` CLI; no network or API calls.
+`npm test` – 71 tests with a mock LLM, a local mock server and an offline stand-in for the `claude` CLI; no network or API calls.
 
 ## Credits and original ideas
 
