@@ -24,16 +24,34 @@ avoids the failed idea; later wiki patterns drive refinement of an already accep
 Skill names are chosen by the proposer LLM per run; there is no fixed list in the paper.
 
 ## Differences from this implementation
-The prompts, output formats and sampling follow the paper's Appendix C and E. What still differs:
-- Inference prompt: paper uses a task-specific prompt per benchmark; ours is one generic prompt
-  (`--task-desc` fills "an expert agent that solves …"). Answers use `<answer>…</answer>` tags as in the paper
-  (a trailing `ANSWER:` line is accepted as a fallback).
-- Inference agents: the paper's have environment tools (bash, search, file readers); ours answer in plain text.
-- Proposer tools: the paper's `read_file` / `finish` are Claude Code's Read tool and the final JSON reply;
-  traces are read at `raw/iter-NN/<task_id>.json` instead of a `traces/` alias. It is asked to read ≥4 traces,
-  but that is not enforced.
-- Skill names: kebab-case (paper's prompt says snake_case, its case study shows kebab-case).
-- Prompt additions: the proposer is told SKILL.md must start with frontmatter and may add a `rationale`.
-- Wiki log file is `logs.md` (the paper's prompt says `log.md`, its structure list says `logs.md`).
-- Starting state: every run starts from an empty skill set (as in the paper) and does not resume from `skills/`.
-- Splits, models and iteration count are user-chosen; the paper's are in its Table 6 / Appendix B.
+Follows the paper's loop, layout, Appendix C sampling and Appendix E.2 / E.3 prompts. What still differs:
+
+**Not implemented**
+- The five benchmarks and their environments (datasets, ALFWorld simulator, spreadsheet tooling), and the
+  per-benchmark inference prompts of Appendix E.1 (ours is one generic prompt; `--task-desc` fills in the task).
+- The baselines Trace2Skill, EvoSkill and SkillOpt, and the cross-model skill-transfer experiments.
+- The paper's models (Qwen-3.5/3.6, Gemma-4, Gemini-3.5-Flash). A text-only OpenAI-compatible backend
+  (`--infer-backend openai`, e.g. vLLM) exists but has only been tested against a mock server.
+
+**Implemented, but with assumptions**
+- Inference-agent tools: optional Claude Code tools (`--agent-tools`) instead of the paper's bash/search/file
+  readers; permission patterns, not a sandbox. The default is no tools.
+- Proposer: `read_file` / `finish` are Claude Code's Read tool and the final JSON reply; traces are read at
+  `raw/iter-NN/<task_id>.json` instead of a `traces/` alias. "Read at least 4 traces" is enforced from the
+  transcript with a single reminder, then the proposal is accepted anyway.
+- Wiki ablations: the paper does not say exactly what "no wiki access" means. Here the proposer works in a copy
+  holding only `raw/` and `skills/` (so it also loses `skill-impact.md`); the agent variant copies `wiki/` into its
+  workspace for every rollout (training, validation and test), not only training.
+- Statistics: one-sided paired bootstrap of the evolved skills against the no-skill baseline (1,000 resamples, seeded);
+  no tie grouping across several methods, since there are no other methods.
+- Test evaluation is run once at the end, from the final skill set; the number of runs, iterations and split sizes are
+  user-chosen (the paper's are in its Table 6 / Appendix B).
+
+**Small deviations**
+- Skill names are kebab-case (the paper's prompt says snake_case, its case study shows kebab-case).
+- Prompt additions: SKILL.md must start with frontmatter; an optional `rationale` and `resources` field.
+- The wiki log file is `logs.md` (the paper's prompt says `log.md`, its structure list says `logs.md`).
+- Iterations are numbered from 1 (`raw/iter-01`); the paper's figures and tables count from 0. The baseline
+  validation is scored before iteration 1.
+- A run starts from an empty skill set and wiki (as in the paper) and refuses a non-empty directory unless
+  `--resume` or `--force` is given.
