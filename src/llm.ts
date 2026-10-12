@@ -10,6 +10,9 @@ export interface ClaudeCliOptions {
 /** "Bash(python3 *)" → "Bash"; `--tools` takes tool names, `--allowedTools` takes the full specs. */
 const toolName = (spec: string) => spec.replace(/\(.*$/, '');
 
+/** Claude Code adds account context (e.g. the user's email) to every session; keep it out of stored traces. */
+const redact = (s: string) => s.replace(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g, '[email]');
+
 const clip = (s: string, n = 4000) => (s.length > n ? s.slice(0, n) + `…[+${s.length - n} chars]` : s);
 
 /** Renders `claude --output-format stream-json` events as a readable transcript and extracts the final text. */
@@ -39,7 +42,8 @@ export function parseStream(stdout: string): { text: string; transcript: string 
       }
     } else if (ev.type === 'result' && typeof ev.result === 'string') text = ev.result;
   }
-  return { text: text.trim(), transcript: lines.join('\n') };
+  if (text.trim()) lines.push(`[final] ${text.trim()}`);
+  return { text: text.trim(), transcript: redact(lines.join('\n')) };
 }
 
 /** Roles whose full execution log is recorded (reasoning + tool calls) instead of just the final reply. */
@@ -82,7 +86,7 @@ export function claudeCli(opts: ClaudeCliOptions = {}): Llm {
         if (code !== 0) return reject(new Error(`claude exited with ${code}: ${err.trim().slice(0, 500)}`));
         if (!stream) return resolve(out.trim());
         const parsed = parseStream(out);
-        resolve({ text: parsed.text, transcript: parsed.transcript ? `${parsed.transcript}\n[final] ${parsed.text}` : parsed.text });
+        resolve({ text: parsed.text, transcript: parsed.transcript || parsed.text });
       });
       child.stdin.end(call.prompt);
     });

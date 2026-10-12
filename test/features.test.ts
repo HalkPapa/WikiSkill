@@ -153,6 +153,17 @@ test('parseStream renders reasoning, tool calls and the final text', () => {
   assert.match(r.transcript, /\[thinking\] hmm\n\[tool_use\] Read \{"file_path":"a"\}\n\[tool_result\] file body\n\[assistant\] done/);
 });
 
+test('parseStream redacts email addresses in the stored transcript but not in the scored text', () => {
+  const events = [
+    { type: 'assistant', message: { content: [{ type: 'thinking', thinking: 'User email: someone@example.com' }] } },
+    { type: 'result', result: 'mail a.b@x.org' },
+  ].map((e) => JSON.stringify(e)).join('\n');
+  const r = parseStream(events);
+  assert.match(r.transcript, /User email: \[email\]/);
+  assert.ok(!r.transcript.includes('example.com') && !r.transcript.includes('x.org')); // incl. the [final] line
+  assert.equal(r.text, 'mail a.b@x.org');
+});
+
 test('openAiCompatible talks to /chat/completions; routeLlm sends only the agent there', async () => {
   let body: any;
   const server = createServer((req, res) => {
