@@ -49,7 +49,9 @@ eval options
 rescore options
   --predictions <file>   results/predictions.jsonl of a run (repeatable; rows of all files are pooled)
   --baseline <condition> compare every condition with this one (default no-skills; e.g. external:gpt-x)
-  --reparse              re-extract the answer from each row's raw output instead of using the stored one
+  --reparse              re-extract every answer from the row's raw output (rows with answer null are always re-extracted)
+  --splits <splits.json> report rows whose task is not in their split
+  --strict               exit with status 1 on warnings too (inconsistent rows, missing tasks)
   --rows-out <file>      write the re-scored rows as JSONL (default: print the summary only)
   --report <file>        also write the summary as JSON
   (--scorer / --scorer-cmd choose the new scorer)
@@ -58,8 +60,11 @@ common options
   --val-ratio <r>        validation share of tasks without a split (default 0.4)
   --test-ratio <r>       test share of tasks without a split (default 0)
   --scorer exact|contains
-  --scorer-cmd "<cmd>"   external grader (overrides --scorer): gets {"id","input","expected","answer"} as JSON on stdin,
-                         prints true/false, 1/0 or {"correct":true}. Runs on this machine.
+  --scorer-cmd "<cmd>"   external grader (overrides --scorer), run with 'sh -c' in the current directory, once per answer.
+                         stdin: {"id","input","expected","answer","output","workspace"} as JSON (answer may be null;
+                         workspace is null when re-scoring). stdout: true/false, 1/0, {"correct":true|false} or
+                         {"score":n} (n>=1 is correct); anything else counts as wrong and is reported.
+                         A grader that fails or exceeds 60 s counts as wrong and makes the exit status 1.
   --concurrency <n>      parallel rollouts (default 4)
   --task-desc "<text>"   completes "an expert agent that solves …" in the prompts
   --model <m>            Claude model for the wiki maintainer and skill proposer (and the agent by default)
@@ -71,6 +76,8 @@ common options
   --agent-prompt <file>  agent system prompt template containing {skill_section} (see benchmarks/prompts/)
   --agent-mcp-config <file>  MCP servers that expose a benchmark environment to the agent as tools; write server
                          paths as {configdir}/server.mjs (the agent runs in a temp dir, so relative paths would break)
+
+Exit status: 0 success; 1 error, failed 'check', or graders that could not grade; 2 usage.
 
 tasks.jsonl: one {"id","input","expected"[,"split":"train"|"val"|"test"][,"workspace":"<dir>"]} object per line.
   "workspace" is a directory (relative to the tasks file) copied into the agent's working directory; {workspace} in
@@ -102,6 +109,9 @@ async function main() {
       force: { type: 'boolean', default: false },
       skills: { type: 'string', multiple: true },
       predictions: { type: 'string', multiple: true },
+      splits: { type: 'string' },
+      strict: { type: 'boolean', default: false },
+      help: { type: 'boolean', short: 'h', default: false },
       run: { type: 'string', multiple: true },
       baseline: { type: 'string', default: 'no-skills' },
       'predictions-out': { type: 'string' },
@@ -130,14 +140,23 @@ async function main() {
     },
   });
   const cmd = positionals[0];
+  if (values.help) {
+    console.log(USAGE);
+    return;
+  }
   if (!['evolve', 'eval', 'rescore', 'check'].includes(cmd) || (cmd !== 'rescore' && cmd !== 'check' && !values.tasks)) {
     console.error(USAGE);
     process.exit(2);
   }
   const log = (m: string) => console.error(`[wikiskill] ${m}`);
-  const scoreFn = values['scorer-cmd'] ? (commandScorer(values['scorer-cmd'], { onError: log }) as ScoreFn) : undefined;
+  if (!['exact', 'contains'].includes(values.scorer!)) throw new Error(`--scorer must be exact or contains (got "${values.scorer}"); use --scorer-cmd for a custom grader`);
+  const graderErrors: string[] = [];
+  const scoreFn = values['scorer-cmd']
+    ? (commandScorer(values['scorer-cmd'], { onError: (m) => (graderErrors.push(m), log(m)) }) as ScoreFn)
+    : undefined;
   const scorerLabel = scoreFn ? 'custom' : values.scorer!;
   const f = (x: number) => x.toFixed(3);
+  const fmtP = (p: number) => (p === 0 ? '<0.001' : f(p)); // bootstrap p has a resolution of 1/1000
 
   if (cmd === 'check') {
     if (!values.run?.length) throw new Error('check needs at least one --run <dir>');
@@ -154,15 +173,32 @@ async function main() {
   if (cmd === 'rescore') {
     if (!values.predictions?.length) throw new Error('rescore needs at least one --predictions <file>');
     const rows = (await Promise.all(values.predictions.map(async (file) => parsePredictions(await readFile(file, 'utf8'), file)))).flat();
-    const res = await rescore({ rows, scorer: values.scorer as Scorer, scoreFn, scorerLabel, reparse: values.reparse, baseline: values.baseline });
+    const splits = values.splits ? (JSON.parse(await readFile(values.splits, 'utf8')) as { train?: string[]; val?: string[]; test?: string[] }) : undefined;
+    const res = await rescore({ rows, scorer: values.scorer as Scorer, scoreFn, scorerLabel, reparse: values.reparse, baseline: values.baseline, splits });
     console.log(`${rows.length} rows re-scored with "${scorerLabel}"; ${res.changed} changed verdict`);
-    for (const g of res.summary)
+    for (const g of res.summary) {
+      const b = g.vs_baseline;
       console.log(
-        `  ${g.split.padEnd(6)} ${g.condition.padEnd(24)} ${f(g.accuracy)}  (${g.tasks} tasks, ${g.rows} rows)` +
-          (g.vs_baseline ? `  vs ${res.baseline}: p=${f(g.vs_baseline.p)} (${g.vs_baseline.significant ? 'significant' : 'not significant'})` : ''),
+        `  ${g.split.padEnd(6)} ${g.condition.padEnd(24)} ${f(g.accuracy)}  (${g.tasks} tasks, ${g.rows} rows${g.unanswered ? `, ${g.unanswered} without an answer` : ''})` +
+          (b
+            ? `  vs ${res.baseline}: diff ${b.meanDiff >= 0 ? '+' : ''}${f(b.meanDiff)} on ${b.n} tasks, p=${fmtP(b.p)} (one-sided), ${fmtP(b.pTwoSided)} (two-sided) — ${b.significant ? 'significant' : 'not significant'} at 0.05` +
+              (b.n < 10 ? ' [fewer than 10 tasks: low power]' : '')
+            : ''),
       );
+    }
+    for (const w of res.warnings) console.error(`warning: ${w}`);
+    if (graderErrors.length) console.error(`warning: ${graderErrors.length} row(s) could not be graded by --scorer-cmd and count as wrong (first: ${graderErrors[0]})`);
     if (values['rows-out']) await writeFile(values['rows-out'], res.rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
-    if (values.report) await writeFile(values.report, JSON.stringify({ schema_version: SCHEMA_VERSION, scorer: scorerLabel, baseline: res.baseline, changed: res.changed, summary: res.summary }, null, 2) + '\n');
+    if (values.report)
+      await writeFile(
+        values.report,
+        JSON.stringify(
+          { schema_version: SCHEMA_VERSION, ...(snakeKeys({ scorer: scorerLabel, baseline: res.baseline, changed: res.changed, summary: res.summary }) as object), warnings: res.warnings, grader_failures: graderErrors.length },
+          null,
+          2,
+        ) + '\n',
+      );
+    if (graderErrors.length || (values.strict && res.warnings.length)) process.exitCode = 1;
     return;
   }
 
@@ -198,8 +234,10 @@ async function main() {
   const sh = promisify(execFile);
   const cap = async (cmd: string, args: string[]) => (await sh(cmd, args).then((r) => r.stdout.trim(), () => 'unknown'));
   const pkg = JSON.parse(await readFile(join(dirname(new URL(import.meta.url).pathname), '../../package.json'), 'utf8')) as { version: string };
+  const dirty = (await cap('git', ['status', '--porcelain'])) !== '';
+  const codeDiff = dirty ? (await cap('git', ['diff', 'HEAD'])).slice(0, 1_000_000) : undefined;
   const runInfo = {
-    tool: { name: 'wikiskill', version: pkg.version, git_commit: await cap('git', ['rev-parse', 'HEAD']), git_dirty: (await cap('git', ['status', '--porcelain'])) !== '' },
+    tool: { name: 'wikiskill', version: pkg.version, git_commit: await cap('git', ['rev-parse', 'HEAD']), git_dirty: dirty },
     runtime: { node: process.version, claude_cli: await cap('claude', ['--version']) },
     models: {
       task_agent: values['infer-model'] ?? values.model ?? 'claude CLI default',
@@ -208,6 +246,15 @@ async function main() {
     },
     tasks_file: { path: values.tasks, sha256: createHash('sha256').update(tasksText).digest('hex'), count: tasks.length },
     scorer_command: values['scorer-cmd'] ?? null,
+    // how the task agent is started, so "same prompt" can be judged: the claude CLI adds its own session context
+    // (current date, account email) on top of the system prompt; both are outside this tool's control
+    agent_invocation: {
+      command: 'claude -p --output-format stream-json --verbose --no-session-persistence --disable-slash-commands --strict-mcp-config --setting-sources project --tools <agent tools> --system-prompt <prompt> --model <model>',
+      system_prompt: 'replaces the default prompt (not appended); archived under results/prompts/<sha256>.txt',
+      user_message: "the task's input, verbatim ({workspace} replaced by the agent's working directory)",
+      extra_context: 'Claude Code adds session context (current date; account email, masked as [email] in stored logs) to the model context',
+      sampling: 'temperature and other generation parameters are not set by this tool',
+    },
     agent_prompt_file: values['agent-prompt'] ?? null,
     agent_mcp_config: mcp ? { path: mcp.source, sha256: mcp.sha256 } : null,
   };
@@ -260,6 +307,7 @@ async function main() {
     valRatio,
     testRatio,
     runInfo,
+    codeDiff,
     trainSample: values['train-sample'] ? Number(values['train-sample']) : undefined,
     proposerSeesWiki: !values['proposer-no-wiki'],
     inferenceSeesWiki: values['inference-wiki'],
@@ -276,6 +324,6 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error(e);
+  console.error(process.env.WIKISKILL_DEBUG ? e : `error: ${(e as Error).message}`);
   process.exit(1);
 });

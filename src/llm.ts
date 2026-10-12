@@ -16,9 +16,10 @@ const redact = (s: string) => s.replace(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g, '[email
 const clip = (s: string, n = 4000) => (s.length > n ? s.slice(0, n) + `…[+${s.length - n} chars]` : s);
 
 /** Renders `claude --output-format stream-json` events as a readable transcript and extracts the final text. */
-export function parseStream(stdout: string): { text: string; transcript: string } {
+export function parseStream(stdout: string): { text: string; transcript: string; model?: string } {
   const lines: string[] = [];
   let text = '';
+  let model: string | undefined;
   for (const raw of stdout.split('\n')) {
     if (!raw.trim()) continue;
     let ev: any;
@@ -27,7 +28,8 @@ export function parseStream(stdout: string): { text: string; transcript: string 
     } catch {
       continue;
     }
-    if (ev.type === 'assistant') {
+    if (ev.type === 'system' && ev.subtype === 'init' && typeof ev.model === 'string') model = ev.model;
+    else if (ev.type === 'assistant') {
       for (const b of ev.message?.content ?? []) {
         if (b.type === 'thinking' && b.thinking) lines.push(`[thinking] ${clip(b.thinking)}`);
         else if (b.type === 'text' && b.text) lines.push(`[assistant] ${b.text}`);
@@ -43,7 +45,7 @@ export function parseStream(stdout: string): { text: string; transcript: string 
     } else if (ev.type === 'result' && typeof ev.result === 'string') text = ev.result;
   }
   if (text.trim()) lines.push(`[final] ${text.trim()}`);
-  return { text: text.trim(), transcript: redact(lines.join('\n')) };
+  return { text: text.trim(), transcript: redact(lines.join('\n')), ...(model ? { model } : {}) };
 }
 
 /** Roles whose full execution log is recorded (reasoning + tool calls) instead of just the final reply. */
@@ -88,7 +90,7 @@ export function claudeCli(opts: ClaudeCliOptions = {}): Llm {
         if (code !== 0) return reject(new Error(`claude exited with ${code}: ${err.trim().slice(0, 500)}`));
         if (!stream) return resolve(out.trim());
         const parsed = parseStream(out);
-        resolve({ text: parsed.text, transcript: parsed.transcript || parsed.text });
+        resolve({ text: parsed.text, transcript: parsed.transcript || parsed.text, model: parsed.model });
       });
       child.stdin.end(call.prompt);
     });

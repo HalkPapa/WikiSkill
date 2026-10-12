@@ -14,8 +14,12 @@ export interface BootstrapResult {
   meanA: number;
   meanB: number;
   meanDiff: number;
-  /** One-sided p-value for "A is better than B": share of bootstrap samples where mean(A-B) <= 0. */
+  /** One-sided p-value for "A is better than B": share of bootstrap samples where mean(A-B) <= 0. Resolution 1/iterations. */
   p: number;
+  /** Two-sided counterpart: twice the smaller tail share, capped at 1. */
+  pTwoSided: number;
+  /** Number of paired tasks. */
+  n: number;
   significant: boolean;
 }
 
@@ -30,11 +34,14 @@ export function pairedBootstrap(a: number[], b: number[], iterations = 1000, see
   const mean = (xs: number[]) => xs.reduce((s, x) => s + x, 0) / xs.length;
   const rng = mulberry32(seed);
   let notBetter = 0;
+  let notWorse = 0;
   for (let it = 0; it < iterations; it++) {
     let sum = 0;
     for (let j = 0; j < n; j++) sum += diff[Math.floor(rng() * n)];
     if (sum / n <= 0) notBetter++;
+    if (sum / n >= 0) notWorse++;
   }
   const p = notBetter / iterations;
-  return { meanA: mean(a), meanB: mean(b), meanDiff: mean(diff), p, significant: p < 0.05 };
+  const pTwoSided = Math.min(1, 2 * Math.min(p, notWorse / iterations));
+  return { meanA: mean(a), meanB: mean(b), meanDiff: mean(diff), p, pTwoSided, n, significant: p < 0.05 };
 }

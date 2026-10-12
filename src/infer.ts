@@ -60,6 +60,21 @@ export function extractAnswer(output: string): string | null {
   return line ? line[1].trim() : null;
 }
 
+/** The reply part of a stored execution log: everything after the last `[final] ` marker, else the whole text. */
+export function finalPart(output: string): string {
+  const marker = '[final] ';
+  const i = output.lastIndexOf(`\n${marker}`);
+  if (i >= 0) return output.slice(i + 1 + marker.length);
+  return output.startsWith(marker) ? output.slice(marker.length) : output;
+}
+
+/**
+ * The answer as extracted at run time, recomputed from a stored log: the final reply first, then the whole log;
+ * in each, the last `<answer>…</answer>`, else the last line starting with `ANSWER:`. Logs without markers
+ * (e.g. from an external AI) are treated as one final reply.
+ */
+export const answerFromOutput = (output: string): string | null => extractAnswer(finalPart(output)) ?? extractAnswer(output);
+
 const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ').replace(/[.。]$/, '');
 
 export function score(answer: string | null, expected: string, scorer: Scorer): boolean {
@@ -107,6 +122,7 @@ export async function runTask(llm: Llm, task: Task, r: Rollout): Promise<Trace> 
     if (r.wikiDir) await cp(r.wikiDir, join(cwd, 'wiki'), { recursive: true });
     let text: string;
     let transcript: string;
+    let model: string | undefined;
     const system = buildSystem(r.skills, { taskDesc: r.taskDesc, hasWorkspace: tools.length > 0, wikiAccess: !!r.wikiDir, template: r.promptTemplate });
     const promptSha = sha256(system);
     await r.onPrompt?.(promptSha, system);
@@ -121,6 +137,7 @@ export async function runTask(llm: Llm, task: Task, r: Rollout): Promise<Trace> 
       });
       text = replyText(reply);
       transcript = replyTranscript(reply);
+      model = typeof reply === 'string' ? undefined : reply.model;
     } catch (e) {
       text = transcript = `[agent error] ${(e as Error).message}`;
     }
@@ -134,6 +151,7 @@ export async function runTask(llm: Llm, task: Task, r: Rollout): Promise<Trace> 
       answer,
       correct: r.scoreFn ? await r.scoreFn(answer, task, { output: transcript, workspace: cwd }) : score(answer, task.expected, r.scorer),
       systemPromptSha256: promptSha,
+      ...(model ? { model } : {}),
     };
   } finally {
     await rm(cwd, { recursive: true, force: true });

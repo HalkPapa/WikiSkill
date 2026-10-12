@@ -25,6 +25,18 @@ export async function checkRun(dir: string): Promise<CheckReport> {
   if (manifest.environment?.tool?.git_dirty === true) notes.push('the code that produced this run had uncommitted changes (environment.tool.git_dirty)');
   if (!manifest.environment?.tool?.git_commit || manifest.environment.tool.git_commit === 'unknown') notes.push('no git commit recorded for the producing code');
 
+  if (manifest.guarantees?.test_split_used_during_evolution !== false) bad('manifest.guarantees.test_split_used_during_evolution is not false');
+
+  // content hashes pinned at completion: detects rows, tasks or splits edited after the run
+  const hashes = manifest.files_sha256;
+  if (!hashes) notes.push('the manifest pins no content hashes (run produced by an older version); edits to predictions.jsonl would go unnoticed');
+  else
+    for (const [key, file] of [['predictions', 'results/predictions.jsonl'], ['tasks', 'tasks.jsonl'], ['splits', 'splits.json']] as const) {
+      const text = await readFile(join(dir, file), 'utf8').catch(() => null);
+      if (text === null) bad(`${file} is missing`);
+      else if (sha256(text) !== hashes[key]) bad(`${file} was changed after the run (SHA-256 differs from manifest.files_sha256.${key})`);
+    }
+
   // splits
   const splits = await readJson(join(dir, 'splits.json')).catch(() => null);
   const splitOf = new Map<string, string>();
@@ -49,7 +61,7 @@ export async function checkRun(dir: string): Promise<CheckReport> {
   for (const r of rows) {
     if (r.run !== manifest.run) bad(`row for ${r.task_id}/${r.condition} has run "${r.run}", manifest says "${manifest.run}"`);
     const sp = splitOf.get(r.task_id);
-    if (splits && sp !== r.split) bad(`row ${r.task_id}/${r.condition} says split "${r.split}" but splits.json says "${sp ?? 'unknown task'}"`);
+    if (splits && sp !== r.split) bad(`row ${r.task_id}/${r.condition} says split "${r.split}" but splits.json ${sp ? `puts it in "${sp}"` : 'does not list the task at all'}`);
     if (r.split === 'test' && r.condition.startsWith('candidate:')) bad(`test task ${r.task_id} was used in a gate rollout (${r.condition})`);
   }
   const count = (split: string, condition: string) => rows.filter((r) => r.split === split && r.condition === condition);
@@ -60,10 +72,36 @@ export async function checkRun(dir: string): Promise<CheckReport> {
     const perTask = new Map<string, number>();
     for (const r of got) perTask.set(r.task_id, (perTask.get(r.task_id) ?? 0) + 1);
     if (perTask.size !== n) bad(`${split}/${condition}: rows for ${perTask.size} tasks, expected ${n}`);
-    if ([...perTask.values()].some((c) => c !== 1)) bad(`${split}/${condition}: some tasks have more than one row`);
+    const dup = [...perTask].filter(([, c]) => c !== 1).map(([id]) => id);
+    if (dup.length) bad(`${split}/${condition}: tasks with more than one row: ${dup.slice(0, 5).join(', ')}${dup.length > 5 ? ', …' : ''}`);
   }
   if ((manifest.split_sizes?.test ?? 0) === 0) notes.push('no test split: nothing to compare on held-out data');
   notes.push(`${rows.length} prediction rows`);
+  if (manifest.environment?.tool?.git_dirty === true && !manifest.files?.code_diff) notes.push('git_dirty is true but no results/code.diff was saved; the exact code cannot be reproduced');
+
+  // test rows must have been written after every gate (candidate) rollout
+  const lastGate = Math.max(0, ...rows.filter((r) => r.condition.startsWith('candidate:') && r.created_at).map((r) => Date.parse(r.created_at!)));
+  const firstTest = Math.min(Infinity, ...rows.filter((r) => r.split === 'test' && r.created_at).map((r) => Date.parse(r.created_at!)));
+  if (lastGate > 0 && Number.isFinite(firstTest) && firstTest < lastGate) bad('a test row was written before the last gate rollout (created_at order)');
+
+  // tasks.jsonl must agree with splits.json
+  const tasksText = await readFile(join(dir, 'tasks.jsonl'), 'utf8').catch(() => null);
+  if (tasksText === null) bad('tasks.jsonl is missing');
+  else {
+    const inTasks = new Map<string, string>();
+    for (const line of tasksText.split('\n').filter((l) => l.trim())) {
+      try {
+        const t = JSON.parse(line);
+        inTasks.set(String(t.id), t.split);
+      } catch {
+        bad('tasks.jsonl has a line that is not valid JSON');
+      }
+    }
+    if (splits) {
+      for (const [id, sp] of splitOf) if (inTasks.get(id) !== sp) bad(`tasks.jsonl ${inTasks.has(id) ? `has "${id}" in ${inTasks.get(id)}` : `lacks "${id}"`}, splits.json says ${sp}`);
+      for (const id of inTasks.keys()) if (!splitOf.has(id)) bad(`tasks.jsonl has "${id}", which splits.json does not list`);
+    }
+  }
 
   // prompts
   for (const sha of new Set(rows.map((r) => r.system_prompt_sha256))) {
@@ -79,7 +117,11 @@ export async function checkRun(dir: string): Promise<CheckReport> {
   // skills
   const skills = await readSkillDirs(join(dir, 'skills'));
   const digest = skillsDigest(skills);
-  if (digest.bundle_sha256 !== manifest.skills?.bundle_sha256) bad('skills/ does not match manifest.skills.bundle_sha256 (edited after the run?)');
+  if (digest.bundle_sha256 !== manifest.skills?.bundle_sha256) {
+    const pinned: Record<string, string> = manifest.skills?.per_skill ?? {};
+    const diff = [...new Set([...Object.keys(pinned), ...Object.keys(digest.per_skill)])].filter((n) => pinned[n] !== digest.per_skill[n]);
+    bad(`skills/ does not match manifest.skills: ${diff.map((n) => `${n} (${!(n in digest.per_skill) ? 'missing' : !(n in pinned) ? 'not in the manifest' : 'changed'})`).join(', ') || 'bundle hash differs'}`);
+  }
   notes.push(`${skills.size} skill(s): ${[...skills.keys()].join(', ') || '(none)'}`);
 
   // no test leakage into training traces

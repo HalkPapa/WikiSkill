@@ -50,6 +50,11 @@
       }
     },
     "answer_format": { "type": "string" },
+    "files_sha256": {
+      "type": "object",
+      "description": "Optional (present when status is completed): SHA-256 of results/predictions.jsonl, tasks.jsonl and splits.json at completion. wikiskill check verifies them.",
+      "properties": { "predictions": { "type": "string" }, "tasks": { "type": "string" }, "splits": { "type": "string" } }
+    },
     "guarantees": {
       "type": "object",
       "required": ["test_split_used_during_evolution", "wiki_hidden_from_task_agent"],

@@ -32,6 +32,8 @@ export interface Trace {
   correct: boolean;
   /** SHA-256 of the system prompt the agent saw (see results/prompts/). */
   systemPromptSha256?: string;
+  /** Resolved model id that produced the reply (e.g. claude-haiku-4-5-20251001), when known. */
+  model?: string;
 }
 
 export type Role = 'infer' | 'wiki' | 'propose';
@@ -48,7 +50,7 @@ export interface LlmCall {
   mcpConfig?: string;
 }
 /** A reply is the final text, or the final text plus the full execution transcript. */
-export type LlmReply = string | { text: string; transcript: string };
+export type LlmReply = string | { text: string; transcript: string; /** Resolved model id reported by the CLI. */ model?: string };
 export type Llm = (call: LlmCall) => Promise<LlmReply>;
 
 export type Scorer = 'exact' | 'contains';

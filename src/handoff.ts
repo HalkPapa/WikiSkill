@@ -34,8 +34,16 @@ export interface PredictionRow {
   scorer: string;
   /** SHA-256 of the exact system prompt the agent saw; the text is in results/prompts/<sha>.txt. */
   system_prompt_sha256: string;
-  /** Full execution log: reasoning, tool calls and tool outputs when available, then the final reply. */
+  /**
+   * Full execution log: reasoning, tool calls and tool outputs when available, then the final reply. Lines start with
+   * the markers `[thinking]`, `[assistant]`, `[tool_use]`, `[tool_result]`; the final reply is the text after the last
+   * `[final] ` marker. An external AI's output needs no markers (the whole text counts as the final reply).
+   */
   output: string;
+  /** Resolved model id that produced the answer (optional; absent for external rows and mocks). */
+  model?: string;
+  /** When the row was written (ISO 8601; optional). Test rows are written after all gate rollouts. */
+  created_at?: string;
 }
 
 export const PREDICTION_REQUIRED_KEYS = [
@@ -61,6 +69,8 @@ export function predictionRow(
     scorer: meta.scorer,
     system_prompt_sha256: t.systemPromptSha256 ?? '',
     output: t.output,
+    ...(t.model ? { model: t.model } : {}),
+    created_at: new Date().toISOString(),
   };
 }
 

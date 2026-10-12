@@ -79,6 +79,7 @@ test('commandScorer feeds JSON on stdin and reads a verdict', async () => {
 });
 
 test('parseVerdict accepts the documented formats', () => {
-  for (const [out, want] of [['true', true], ['1\n', true], ['false', false], ['0', false], ['', false], ['{"correct":true}', true], ['{"score":1}', true], ['{"score":0.5}', false], ['garbage', false]] as const)
+  for (const [out, want] of [['true', true], ['1\n', true], ['false', false], ['0', false], ['{"correct":true}', true], ['{"correct":false}', false], ['{"score":1}', true], ['{"score":0.5}', false],
+    ['', null], ['garbage', null], ['2', null], ['maybe', null], ['true extra', null], ['{"correct":"true"}', null], ['[1]', null]] as const)
     assert.equal(parseVerdict(out), want, out);
 });

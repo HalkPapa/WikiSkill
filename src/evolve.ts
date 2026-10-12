@@ -46,6 +46,8 @@ export interface EvolveOptions {
   runLabel?: string;
   /** Free-form facts about the environment (tool version, models, task file hash, …) copied into manifest.json. */
   runInfo?: Record<string, unknown>;
+  /** `git diff` of the code that produced the run when its tree was dirty; saved as results/code.diff. */
+  codeDiff?: string;
   /** Name of the scorer written to prediction rows ("exact", "contains" or "custom"). */
   scorerLabel?: string;
   log?: (msg: string) => void;
@@ -101,6 +103,14 @@ export async function evolve(o: EvolveOptions): Promise<EvolveResult> {
   const { train, val, test } = splitTasks(o.tasks, o.valRatio ?? 0.4, o.testRatio ?? 0);
   if (train.length === 0 || val.length === 0) throw new Error('need at least one train and one validation task');
   log(`train=${train.length} val=${val.length} test=${test.length}`);
+  // the tasks themselves, with the split each one got: the receiving team needs inputs and truths next to the rows
+  await store.writeText(
+    'tasks.jsonl',
+    [...train.map((t) => ['train', t]), ...val.map((t) => ['val', t]), ...test.map((t) => ['test', t])]
+      .map(([split, t]) => JSON.stringify({ id: (t as Task).id, input: (t as Task).input, expected: (t as Task).expected, split }))
+      .join('\n') + '\n',
+  );
+  if (o.codeDiff) await store.writeText('results/code.diff', o.codeDiff);
   await store.writeJson('splits.json', {
     schema_version: SCHEMA_VERSION,
     train: train.map((t) => t.id),
@@ -108,7 +118,7 @@ export async function evolve(o: EvolveOptions): Promise<EvolveResult> {
     test: test.map((t) => t.id),
   });
 
-  const manifest = (status: 'running' | 'completed' | 'failed', skills: SkillSet, extra: object = {}) => ({
+  const manifest = async (status: 'running' | 'completed' | 'failed', skills: SkillSet, extra: object = {}) => ({
     schema_version: SCHEMA_VERSION,
     status,
     run,
@@ -135,6 +145,15 @@ export async function evolve(o: EvolveOptions): Promise<EvolveResult> {
     split_sizes: { train: train.length, val: val.length, test: test.length },
     skills: { names: [...skills.keys()], ...skillsDigest(skills) },
     answer_format: 'The agent ends its reply with <answer>…</answer>; the text inside the tags is the answer.',
+    ...(status === 'completed'
+      ? {
+          files_sha256: {
+            predictions: sha256(await store.readText('results/predictions.jsonl')),
+            tasks: sha256(await store.readText('tasks.jsonl')),
+            splits: sha256(await store.readText('splits.json')),
+          },
+        }
+      : {}),
     guarantees: {
       test_split_used_during_evolution: false,
       wiki_hidden_from_task_agent: !o.inferenceSeesWiki,
@@ -142,14 +161,16 @@ export async function evolve(o: EvolveOptions): Promise<EvolveResult> {
     files: {
       predictions: 'results/predictions.jsonl',
       prompts: 'results/prompts/<system_prompt_sha256>.txt',
+      tasks: 'tasks.jsonl',
       splits: 'splits.json',
       report: 'report.json',
+      ...(o.codeDiff ? { code_diff: 'results/code.diff' } : {}),
       skills: 'skills/',
       traces: 'raw/',
       wiki: 'wiki/',
     },
   });
-  await store.writeJson('manifest.json', manifest('running', new Map()));
+  await store.writeJson('manifest.json', await manifest('running', new Map()));
 
   const seenPrompts = new Set<string>();
   const rollouts = async (
@@ -263,10 +284,10 @@ export async function evolve(o: EvolveOptions): Promise<EvolveResult> {
       run,
       ...(snakeKeys({ baselineVal, bestVal: best, skills: [...skills.keys()], history, test: testResult }) as object),
     });
-    await store.writeJson('manifest.json', manifest('completed', skills));
+    await store.writeJson('manifest.json', await manifest('completed', skills));
     return result;
   } catch (e) {
-    await store.writeJson('manifest.json', manifest('failed', new Map(), { error: (e as Error).message }));
+    await store.writeJson('manifest.json', await manifest('failed', new Map(), { error: (e as Error).message }));
     throw e;
   }
 }

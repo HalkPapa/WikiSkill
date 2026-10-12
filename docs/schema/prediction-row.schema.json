@@ -21,7 +21,9 @@
     "correct": { "type": "boolean" },
     "scorer": { "type": "string", "description": "exact | contains | custom" },
     "system_prompt_sha256": { "type": "string", "description": "Text is in results/prompts/<sha>.txt (empty string if unknown)." },
-    "output": { "type": "string", "description": "Full execution log: reasoning, tool calls, tool outputs, then the final reply." },
+    "output": { "type": "string", "description": "Full execution log. Lines start with [thinking], [assistant], [tool_use], [tool_result]; the final reply is the text after the last \"[final] \" marker. An external AI's output needs no markers: the whole text counts as the final reply." },
+    "model": { "type": "string", "description": "Optional. Resolved model id that produced the answer (e.g. claude-haiku-4-5-20251001); absent for external rows." },
+    "created_at": { "type": "string", "format": "date-time", "description": "Optional. When the row was written; test rows are written after all gate rollouts." },
     "correct_original": { "type": "boolean", "description": "Added by `wikiskill rescore`: the verdict before the first re-scoring." }
   },
   "additionalProperties": true

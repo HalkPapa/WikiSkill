@@ -95,7 +95,7 @@ export class Store {
   /** Deletes a previous run's files (a fresh run starts with S0 = ∅ and an empty wiki). */
   async reset() {
     for (const d of ['raw', 'wiki', 'skills', 'results']) await rm(this.path(d), { recursive: true, force: true });
-    for (const f of ['manifest.json', 'report.json', 'splits.json']) await rm(this.path(f), { force: true });
+    for (const f of ['manifest.json', 'report.json', 'splits.json', 'tasks.jsonl']) await rm(this.path(f), { force: true });
   }
 
   /** Appends rows to results/predictions.jsonl (the hand-off file). */
@@ -117,6 +117,15 @@ export class Store {
   async writePrompt(sha: string, text: string) {
     await mkdir(this.path('results', 'prompts'), { recursive: true });
     await writeFile(this.path('results', 'prompts', `${sha}.txt`), text, { flag: 'w' });
+  }
+
+  async readText(rel: string): Promise<string> {
+    return readFile(this.path(rel), 'utf8').catch(() => '');
+  }
+
+  async writeText(rel: string, text: string) {
+    await mkdir(dirname(this.path(rel)), { recursive: true });
+    await writeFile(this.path(rel), text);
   }
 
   async writeJson(rel: string, value: unknown) {
