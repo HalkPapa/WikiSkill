@@ -48,6 +48,9 @@ node dist/src/cli.js check --run <成果物のディレクトリ>
 - テストの `no-skills` と `evolved` が、全課題について**ちょうど1行ずつ**ある
 - 参照されるプロンプト全件が `results/prompts/` にあり、ハッシュが名前と一致する
 - `skills/` の内容が、`manifest.json` のハッシュと一致する(どのスキルが違うかも表示されます)
+- **エージェントや外部採点コマンドの呼び出しが失敗していない**(`manifest.json` の `quality`、行の `error`)。失敗は「不正解」ではなく環境の障害なので、1回だけ再試行したうえで、残った失敗は記録され、その run は `FAIL` になります。大半が失敗した場合、run は途中で止まります(`status: failed`)
+
+練習用に、実際の run を1つ同梱しています: [`examples/reference-run/`](../examples/reference-run/)(`node dist/src/cli.js check --run examples/reference-run`)。
 
 終了コードは、`OK` が 0、`FAIL` が 1 です。複数回実行(`--runs N`)の場合は、親ディレクトリを渡すと `run-1`, `run-2`, … を順に検査します。`FAIL` の run は使わず、送り元に連絡してください。
 
@@ -88,7 +91,7 @@ node dist/src/cli.js check --run <成果物のディレクトリ>
 | `run` | 文字列 | `run-1`, `run-2`, … 。`eval` では指定した名前 |
 | `split` | 文字列 | `val` または `test`(`eval` では指定した分割) |
 | `condition` | 文字列 | 何が答えたか(下表) |
-| `iteration` | 整数 | `candidate:` の行ではゲートの反復番号。それ以外は `0` |
+| `iteration` | 整数 | `candidate:` の行ではゲートの反復番号、`resumed-skills` の行では続行を始めた時点の反復番号。それ以外は `0` |
 | `task_id` | 文字列 | 課題ID(`splits.json`・`tasks.jsonl` と対応) |
 | `input` | 文字列 | エージェントに渡した課題文 |
 | `expected` | 文字列 | 正解 |
@@ -99,6 +102,7 @@ node dist/src/cli.js check --run <成果物のディレクトリ>
 | `output` | 文字列 | 実行ログ全文(下記) |
 | `model` | 文字列(任意) | 答えを出したモデルの正確なID(例: `claude-haiku-4-5-20251001`)。外部の行にはない |
 | `created_at` | 文字列(任意) | 行を書いた時刻(ISO 8601) |
+| `error` | 文字列(任意) | エージェントの呼び出し自体が失敗した(1回の再試行後も)。`correct` は `false` だが**本当の判定ではない**。この行を含む run は `check` が `FAIL` にする |
 
 ### `output` の書式
 行頭のマーカーで区切られます: `[thinking]`(推論)、`[assistant]`(途中の発言)、`[tool_use]`(ツール呼び出し)、`[tool_result]`(ツールの出力)、最後に `[final] ` と最終返答。`[assistant]` の内容は、最終返答と重なることがあります。**最終返答 = 最後の `[final] ` 以降のテキスト** です。
@@ -142,6 +146,8 @@ node dist/src/cli.js check --run <成果物のディレクトリ>
   - `options`: 反復回数、採点器、分割比率、並列数、エージェントのツール、wiki の可視性など
   - `skills`: 最終スキル名と、スキルごと/全体の SHA-256
   - `files_sha256`: 完了時の `predictions.jsonl`・`tasks.jsonl`・`splits.json` のハッシュ
+  - `quality`: `agent_errors`(失敗したエージェント呼び出しの数)と `grader_failures`(失敗した外部採点の数)。どちらも 0 でなければ使えません
+  - 続きから実行した run だけ: `first_started_at`(最初の開始時刻。`started_at` は最新のセッション)、`resumed_from_iteration`
   - `guarantees`: [8](#8-保証と非保証) の申告
 - **`report.json`**: 暫定の集計。**正式な数値は `predictions.jsonl` から再計算してください。** キーは snake_case です。
 
@@ -337,7 +343,7 @@ node dist/src/cli.js eval --tasks run-1/tasks.jsonl --split test --infer-model <
 - **エージェントのツールは本物のサンドボックスではありません**。`options.agent_tools` が空でない run は、許可パターンの範囲でコマンドが実行されています。
 - **実行ログに含まれる情報**: `output` にはモデルの推論過程が含まれます。メールアドレス形式だけを `[email]` に伏せていますが、ほかは伏せていません。**再配布の可否は、送り元の責任者が判断します**(外部に出す前に確認してください)。
 - **暫定採点の限界**: 組み込みの採点は文字列比較だけです。表計算の結果比較など、課題に固有の採点が必要なら、[外部の採点コマンド](#外部の採点コマンドcustom)を使ってください(ただし作業ファイルに依存する採点は `rescore` で再実行できません)。
-- **続きから実行した run**: `manifest.options.resume` が `true` の run は、前回のスキルから続けています。`predictions.jsonl` のテスト行と `no-skills` の検証行は、続行時に作り直されるため重複しません(`check` で確認できます)。
+- **続きから実行した run**: `manifest.options.resume` が `true` の run は、前回のスキルから続けています(複数 run `--runs N` と `--resume` は併用できません。run は1つずつ再開します)。`predictions.jsonl` のテスト行と `no-skills` の検証行は、続行時に作り直されるため重複しません(`check` で確認できます)。
 
 ## 10. バージョンと変更ルール
 

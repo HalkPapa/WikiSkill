@@ -24,6 +24,7 @@
     "output": { "type": "string", "description": "Full execution log. Lines start with [thinking], [assistant], [tool_use], [tool_result]; the final reply is the text after the last \"[final] \" marker. An external AI's output needs no markers: the whole text counts as the final reply." },
     "model": { "type": "string", "description": "Optional. Resolved model id that produced the answer (e.g. claude-haiku-4-5-20251001); absent for external rows." },
     "created_at": { "type": "string", "format": "date-time", "description": "Optional. When the row was written; test rows are written after all gate rollouts." },
+    "error": { "type": "string", "description": "Optional. The agent call itself failed (after one retry); `correct` is false but is not a real verdict. A run containing such rows fails `wikiskill check`." },
     "correct_original": { "type": "boolean", "description": "Added by `wikiskill rescore`: the verdict before the first re-scoring." }
   },
   "additionalProperties": true

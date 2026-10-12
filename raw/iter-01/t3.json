@@ -1,9 +1,0 @@
-{
-  "iteration": 1,
-  "taskId": "t3",
-  "input": "Generate the internal member ID for: Carlos Mendez, born 1978.",
-  "expected": "MEN78C",
-  "output": "**Internal Member ID Generation**\n\nUsing a standard scheme (First 2 letters of first name + First 3 letters of last name + Birth year):\n\n- First Name: Carlos → CA\n- Last Name: Mendez → MEN\n- Birth Year: 1978\n\n**Generated ID: CAMEN1978**\n\nANSWER: CAMEN1978",
-  "answer": "CAMEN1978",
-  "correct": false
-}

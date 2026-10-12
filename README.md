@@ -49,16 +49,17 @@ node dist/src/cli.js evolve --tasks examples/tasks-hidden-rule.jsonl --out runs/
 `split` are divided by `--val-ratio` / `--test-ratio` (deterministic hash of the id). The answer is read from
 `<answer>…</answer>` in the agent's reply and compared with `expected` (`--scorer exact|contains`).
 
-> The repository root already contains a small demo run (`raw/`, `wiki/`, `skills/`). A run refuses to start in a
-> non-empty directory: use `--out <dir>` for a new run, `--resume` to continue one, or `--force` to wipe and restart.
+> A finished example run is in [`examples/reference-run/`](examples/reference-run/) (try `check --run` on it). A run
+> needs an empty `--out` directory (default `runs/default`, git-ignored): use `--resume` to continue a previous run or
+> `--force` to wipe and restart one. A directory holding files that are not from a WikiSkill run is never touched.
 
 ### Options
 
 | Option | Meaning |
 |---|---|
-| `--out <dir>` | run directory (default `.`) |
+| `--out <dir>` | run directory (default `runs/default`); must be empty or a previous run |
 | `--iters <n>` | iterations (default 5) |
-| `--runs <n>` | independent full runs, averaged; each in `<out>/run-N` (the paper uses 3) |
+| `--runs <n>` | independent full runs, averaged; each in `<out>/run-N` (the paper uses 3); needs a clean `--out`, cannot be combined with `--resume` |
 | `--resume` / `--force` | continue a previous run (loads its skills and wiki) / delete it and start over |
 | `--val-ratio`, `--test-ratio` | shares of unsplit tasks for validation / test (defaults 0.4 / 0) |
 | `--train-sample <n>` | max training tasks per iteration |
@@ -107,8 +108,9 @@ node dist/src/cli.js check   --run <run dir>                      # is this run 
 node dist/src/cli.js rescore --predictions <run dir>/results/predictions.jsonl --scorer-cmd "…" [--baseline <condition>]
 ```
 
-- `check` verifies the manifest, the task splits, the prediction rows, the archived prompts, the skills' hashes and that
-  the held-out test split was never used during evolution.
+- `check` verifies the manifest, the task splits, the prediction rows, the archived prompts, the skills' hashes, the
+  pinned content hashes, that no agent or grader call failed, and that the held-out test split left no trace in
+  anything produced during evolution. The proposer works in a sandbox copy that holds no validation or test truths.
 - `rescore` re-grades stored predictions with another scorer (and optionally re-extracts the answers) and compares
   conditions with a paired bootstrap. Rows for an external AI use the same schema (`condition: "external:<name>"`).
 - Full guide for the receiving team (in Japanese): [`docs/HANDOFF.md`](docs/HANDOFF.md). Schemas:
@@ -152,14 +154,14 @@ paper's ALFWorld case study.
 
 - `--agent-tools` runs model-chosen commands on **your machine**. Tool patterns such as `Bash(python3 *)` restrict
   what is allowed, but this is not a sandbox. Leave it off for untrusted tasks.
-- `raw/`, `wiki/` and `skills/` are committed by design, so keep private task data out of a public repository: point
-  `--out` outside the repo, or add those folders to `.gitignore`.
+- Run directories hold your tasks, the agents' full outputs and the test answers. `runs/` is git-ignored; if you commit
+  a run (like the reference run), make sure it contains no private data.
 - Email addresses are masked in stored transcripts (Claude Code adds account context to every session), but
   that is the only redaction; review `raw/` before publishing it.
 
 ## Tests
 
-`npm test` – 33 tests with a mock LLM and a local mock server; no network or API calls.
+`npm test` – 61 tests with a mock LLM, a local mock server and an offline stand-in for the `claude` CLI; no network or API calls.
 
 ## Credits and original ideas
 

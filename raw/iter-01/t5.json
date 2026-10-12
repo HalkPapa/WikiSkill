@@ -1,9 +1,0 @@
-{
-  "iteration": 1,
-  "taskId": "t5",
-  "input": "Generate the internal member ID for: Olga Petrova, born 1969.",
-  "expected": "PET69O",
-  "output": "Based on standard internal member ID conventions (first two letters of first name + first two letters of last name + birth year + two‑digit sequence number for uniqueness), here’s the generated ID:\n\n**ID Construction:**\n- First name: Olga → \"OL\"\n- Last name: Petrova → \"PE\"\n- Birth year: 1969\n- Sequence suffix: 01 (default for first record)\n\n**Resulting Member ID:** `OLPE196901`\n\nANSWER: OLPE196901",
-  "answer": "OLPE196901",
-  "correct": false
-}

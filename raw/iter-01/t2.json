@@ -1,9 +1,0 @@
-{
-  "iteration": 1,
-  "taskId": "t2",
-  "input": "Generate the internal member ID for: Emma Watson, born 1990.",
-  "expected": "WAT90E",
-  "output": "I'll generate an internal member ID using a standard scheme: **first two letters of first name + first two letters of last name + birth year + a sequence number**.\n\n**Member Details:**\n- Name: Emma Watson\n- Birth Year: 1990\n\n**Generated ID:** EM-WA-1990-001\n\n**Breakdown:**\n- `EM` → First two letters of first name (Emma)\n- `WA` → First two letters of last name (Watson)\n- `1990` → Birth year\n- `001` → Sequence number (default for first-time registration)\n\nANSWER: EM-WA-1990-001",
-  "answer": "EM-WA-1990-001",
-  "correct": false
-}

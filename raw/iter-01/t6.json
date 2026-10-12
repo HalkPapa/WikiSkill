@@ -1,9 +1,0 @@
-{
-  "iteration": 1,
-  "taskId": "t6",
-  "input": "Generate the internal member ID for: Ben Ng, born 1995.",
-  "expected": "NG95B",
-  "output": "Since no specific ID-generation policy was provided, I'll use a standard internal‑ID convention commonly used for member IDs:\n\n**Format:** `[First initial][Last name][Last two digits of birth year]` (all uppercase)\n\nApplying it to **Ben Ng, born 1995**:\n- First initial: **B**\n- Last name: **NG**\n- Birth year (last two digits): **95**\n\nCombined → **BNG95**\n\nANSWER: BNG95",
-  "answer": "BNG95",
-  "correct": false
-}

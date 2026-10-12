@@ -1,9 +1,0 @@
-{
-  "iteration": 1,
-  "taskId": "t1",
-  "input": "Generate the internal member ID for: Daisuke Koike, born 1985.",
-  "expected": "KOI85D",
-  "output": "Based on a standard internal member ID format (first three letters of surname + first three letters of given name + birth year):\n\n**Daisuke Koike** → Surname: Koike, Given name: Daisuke, Born: 1985\n\n**Generated ID:** `KOI-DAI-1985`\n\nANSWER: KOI-DAI-1985",
-  "answer": "KOI-DAI-1985",
-  "correct": false
-}

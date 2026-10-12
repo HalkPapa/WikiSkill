@@ -50,6 +50,13 @@
       }
     },
     "answer_format": { "type": "string" },
+    "quality": {
+      "type": "object",
+      "description": "Optional. Failures that distort scores: agent calls that failed after a retry, and external-grader calls that failed. Both must be 0 for `wikiskill check` to pass.",
+      "properties": { "agent_errors": { "type": "integer" }, "grader_failures": { "type": "integer" } }
+    },
+    "first_started_at": { "type": "string", "format": "date-time", "description": "Optional, resumed runs: when the first session started (started_at is the latest session)." },
+    "resumed_from_iteration": { "type": "integer", "description": "Optional, resumed runs: the last iteration already done before this session." },
     "files_sha256": {
       "type": "object",
       "description": "Optional (present when status is completed): SHA-256 of results/predictions.jsonl, tasks.jsonl and splits.json at completion. wikiskill check verifies them.",
