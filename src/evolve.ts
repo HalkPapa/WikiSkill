@@ -46,6 +46,8 @@ export interface EvolveOptions {
   runLabel?: string;
   /** Free-form facts about the environment (tool version, models, task file hash, …) copied into manifest.json. */
   runInfo?: Record<string, unknown>;
+  /** Returns how many external-grader failures happened so far (recorded in the manifest's quality block). */
+  graderFailures?: () => number;
   /** `git diff` of the code that produced the run when its tree was dirty; saved as results/code.diff. */
   codeDiff?: string;
   /** Name of the scorer written to prediction rows ("exact", "contains" or "custom"). */
@@ -94,22 +96,23 @@ export async function evolve(o: EvolveOptions): Promise<EvolveResult> {
   const run = o.runLabel ?? 'run-1';
   const scorerLabel = o.scorerLabel ?? (o.scoreFn ? 'custom' : o.scorer ?? 'exact');
   const startedAt = new Date().toISOString();
-  if (await store.hasData()) {
+  const state = await store.state();
+  if (state === 'foreign')
+    throw new Error(`${o.outDir} contains files that are not from a WikiSkill run (raw/, wiki/, skills/, results/ or manifest.json). Nothing is deleted or merged: choose an empty directory with --out.`);
+  if (state === 'run') {
     if (o.force) await store.reset();
-    else if (!o.resume)
-      throw new Error(`${o.outDir} already holds a run (raw/, wiki/ or skills/). Use --resume to continue it or --force to start over.`);
-  }
+    else if (!o.resume) throw new Error(`${o.outDir} already holds a WikiSkill run. Use --resume to continue it or --force to start over.`);
+  } else if (o.resume) throw new Error(`--resume: ${o.outDir} holds no WikiSkill run to continue.`);
+  const previous = o.resume ? JSON.parse((await store.readText('manifest.json')) || '{}') : {};
   await store.init();
   const { train, val, test } = splitTasks(o.tasks, o.valRatio ?? 0.4, o.testRatio ?? 0);
   if (train.length === 0 || val.length === 0) throw new Error('need at least one train and one validation task');
   log(`train=${train.length} val=${val.length} test=${test.length}`);
-  // the tasks themselves, with the split each one got: the receiving team needs inputs and truths next to the rows
-  await store.writeText(
-    'tasks.jsonl',
+  // tasks.jsonl (inputs and truths, test included) is written only when the run is complete, never while agents work
+  const tasksJsonl = () =>
     [...train.map((t) => ['train', t]), ...val.map((t) => ['val', t]), ...test.map((t) => ['test', t])]
       .map(([split, t]) => JSON.stringify({ id: (t as Task).id, input: (t as Task).input, expected: (t as Task).expected, split }))
-      .join('\n') + '\n',
-  );
+      .join('\n') + '\n';
   if (o.codeDiff) await store.writeText('results/code.diff', o.codeDiff);
   await store.writeJson('splits.json', {
     schema_version: SCHEMA_VERSION,
@@ -118,11 +121,15 @@ export async function evolve(o: EvolveOptions): Promise<EvolveResult> {
     test: test.map((t) => t.id),
   });
 
+  const resumeOffset = o.resume ? await store.lastIteration() : 0;
+  let agentErrors = 0;
   const manifest = async (status: 'running' | 'completed' | 'failed', skills: SkillSet, extra: object = {}) => ({
     schema_version: SCHEMA_VERSION,
     status,
     run,
     started_at: startedAt,
+    ...(o.resume ? { first_started_at: previous.first_started_at ?? previous.started_at ?? startedAt, resumed_from_iteration: resumeOffset } : {}),
+    quality: { agent_errors: agentErrors, grader_failures: o.graderFailures?.() ?? 0 },
     ...(status === 'running' ? {} : { finished_at: new Date().toISOString() }),
     ...extra,
     environment: o.runInfo ?? {},
@@ -199,6 +206,10 @@ export async function evolve(o: EvolveOptions): Promise<EvolveResult> {
         },
       }),
     );
+    const failed = traces.filter((t) => t.error).length;
+    agentErrors += failed;
+    if (traces.length >= 2 && failed / traces.length > 0.5)
+      throw new Error(`${failed} of ${traces.length} agent calls failed (e.g. ${traces.find((t) => t.error)!.error!.slice(0, 120)}): stopping instead of recording failures as wrong answers`);
     if (tag) await store.appendPredictions(traces.map((t) => predictionRow(t, { run, scorer: scorerLabel, ...tag })));
     return traces;
   };
@@ -207,7 +218,7 @@ export async function evolve(o: EvolveOptions): Promise<EvolveResult> {
 
   try {
     let skills: SkillSet = o.resume ? await store.readSkills() : new Map();
-    const offset = o.resume ? await store.lastIteration() : 0;
+    const offset = resumeOffset;
     if (o.resume) await store.dropPredictions((r) => r.split === 'test' || (r.split === 'val' && (r.condition === 'no-skills' || r.condition === 'resumed-skills')));
     const baselineVal = await validate(new Map(), 0, 'no-skills');
     let best = skills.size === 0 ? baselineVal : await validate(skills, offset, 'resumed-skills');
@@ -284,6 +295,8 @@ export async function evolve(o: EvolveOptions): Promise<EvolveResult> {
       run,
       ...(snakeKeys({ baselineVal, bestVal: best, skills: [...skills.keys()], history, test: testResult }) as object),
     });
+    await store.writeText('tasks.jsonl', tasksJsonl());
+    if (agentErrors > 0) log(`WARNING: ${agentErrors} agent call(s) failed even after a retry; those rows are flagged and the run will not pass check`);
     await store.writeJson('manifest.json', await manifest('completed', skills));
     return result;
   } catch (e) {

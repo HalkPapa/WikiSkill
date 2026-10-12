@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { parseArgs } from 'node:util';
 import { evaluateSkillSets } from './evaluate.js';
@@ -18,7 +19,7 @@ import { commandScorer } from './scorer.js';
 import { readSkillDirs } from './store.js';
 import type { Llm, Scorer, Task } from './types.js';
 import { snakeKeys } from './handoff.js';
-import { splitTools } from './util.js';
+import { intOption, ratioOption, splitTools } from './util.js';
 
 const USAGE = `Usage:
   wikiskill evolve --tasks tasks.jsonl [options]    evolve skills (writes raw/ wiki/ skills/)
@@ -29,7 +30,7 @@ const USAGE = `Usage:
   wikiskill check  --run <dir> [--run <dir> …]       verify a finished run is consistent before handing it over
 
 evolve options
-  --out <dir>            run directory holding raw/ wiki/ skills/ (default: .)
+  --out <dir>            run directory holding raw/ wiki/ skills/ … (default: runs/default; must be empty or a previous run)
   --iters <n>            evolution iterations (default 5)
   --runs <n>             independent runs, averaged; each in <out>/run-N (paper: 3; default 1)
   --resume | --force     continue a previous run in <out> | delete it and start over
@@ -85,15 +86,27 @@ tasks.jsonl: one {"id","input","expected"[,"split":"train"|"val"|"test"][,"works
 
 async function loadTasks(path: string): Promise<Task[]> {
   const base = dirname(resolve(path));
+  const seen = new Set<string>();
   return (await readFile(path, 'utf8'))
     .split('\n')
     .filter((l) => l.trim())
     .map((l, i) => {
-      const t = JSON.parse(l) as Task;
-      if (!t.id || t.input === undefined || t.expected === undefined) throw new Error(`${path} line ${i + 1}: need id, input, expected`);
+      const where = `${path} line ${i + 1}`;
+      let t: Task;
+      try {
+        t = JSON.parse(l) as Task;
+      } catch {
+        throw new Error(`${where}: not valid JSON`);
+      }
+      if (t.id === undefined || t.id === null || String(t.id) === '' || typeof t.input !== 'string' || t.expected === undefined || t.expected === null)
+        throw new Error(`${where}: need a non-empty id, a string input and an expected value`);
+      const id = String(t.id);
+      if (seen.has(id)) throw new Error(`${where}: duplicate task id "${id}"`);
+      seen.add(id);
+      if (t.split !== undefined && !['train', 'val', 'test'].includes(t.split)) throw new Error(`${where}: split must be "train", "val" or "test" (got ${JSON.stringify(t.split)}); a misspelt split would silently drop the task`);
       const workspace = t.workspace === undefined ? undefined : resolve(base, t.workspace);
-      if (workspace !== undefined && !existsSync(workspace)) throw new Error(`${path} line ${i + 1}: workspace ${workspace} does not exist`);
-      return { ...t, id: String(t.id), expected: String(t.expected), ...(workspace !== undefined ? { workspace } : {}) };
+      if (workspace !== undefined && !existsSync(workspace)) throw new Error(`${where}: workspace ${workspace} does not exist`);
+      return { ...t, id, expected: String(t.expected), ...(workspace !== undefined ? { workspace } : {}) };
     });
 }
 
@@ -102,7 +115,7 @@ async function main() {
     allowPositionals: true,
     options: {
       tasks: { type: 'string' },
-      out: { type: 'string', default: '.' },
+      out: { type: 'string', default: 'runs/default' },
       iters: { type: 'string', default: '5' },
       runs: { type: 'string', default: '1' },
       resume: { type: 'boolean', default: false },
@@ -174,7 +187,7 @@ async function main() {
     if (!values.predictions?.length) throw new Error('rescore needs at least one --predictions <file>');
     const rows = (await Promise.all(values.predictions.map(async (file) => parsePredictions(await readFile(file, 'utf8'), file)))).flat();
     const splits = values.splits ? (JSON.parse(await readFile(values.splits, 'utf8')) as { train?: string[]; val?: string[]; test?: string[] }) : undefined;
-    const res = await rescore({ rows, scorer: values.scorer as Scorer, scoreFn, scorerLabel, reparse: values.reparse, baseline: values.baseline, splits });
+    const res = await rescore({ rows, scorer: values.scorer as Scorer, scoreFn, scorerLabel, reparse: values.reparse, baseline: values.baseline, splits, concurrency: intOption('concurrency', values.concurrency, 1) });
     console.log(`${rows.length} rows re-scored with "${scorerLabel}"; ${res.changed} changed verdict`);
     for (const g of res.summary) {
       const b = g.vs_baseline;
@@ -224,7 +237,7 @@ async function main() {
     scorer: values.scorer as Scorer,
     scoreFn,
     scorerLabel,
-    concurrency: Number(values.concurrency),
+    concurrency: intOption('concurrency', values.concurrency, 1),
     taskDesc: values['task-desc'],
     agentTools,
     agentPrompt,
@@ -232,13 +245,17 @@ async function main() {
     log,
   };
   const sh = promisify(execFile);
-  const cap = async (cmd: string, args: string[]) => (await sh(cmd, args).then((r) => r.stdout.trim(), () => 'unknown'));
-  const pkg = JSON.parse(await readFile(join(dirname(new URL(import.meta.url).pathname), '../../package.json'), 'utf8')) as { version: string };
-  const dirty = (await cap('git', ['status', '--porcelain'])) !== '';
-  const codeDiff = dirty ? (await cap('git', ['diff', 'HEAD'])).slice(0, 1_000_000) : undefined;
+  // everything about the code is read from the tool's own checkout, not from whatever directory the command runs in
+  const toolDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+  const cap = async (cmd: string, args: string[]): Promise<string | null> =>
+    sh(cmd, args, { cwd: toolDir, maxBuffer: 20_000_000 }).then((r) => r.stdout.trim(), () => null);
+  const pkg = JSON.parse(await readFile(join(toolDir, 'package.json'), 'utf8')) as { version: string };
+  const status = await cap('git', ['status', '--porcelain']);
+  const dirty = status === null ? null : status !== ''; // null = not a git checkout: the code cannot be pinned
+  const codeDiff = dirty ? ((await cap('git', ['diff', 'HEAD'])) ?? '').slice(0, 1_000_000) : undefined;
   const runInfo = {
     tool: { name: 'wikiskill', version: pkg.version, git_commit: await cap('git', ['rev-parse', 'HEAD']), git_dirty: dirty },
-    runtime: { node: process.version, claude_cli: await cap('claude', ['--version']) },
+    runtime: { node: process.version, claude_cli: (await cap('claude', ['--version'])) ?? 'unknown' },
     models: {
       task_agent: values['infer-model'] ?? values.model ?? 'claude CLI default',
       task_agent_backend: values['infer-backend'],
@@ -258,8 +275,8 @@ async function main() {
     agent_prompt_file: values['agent-prompt'] ?? null,
     agent_mcp_config: mcp ? { path: mcp.source, sha256: mcp.sha256 } : null,
   };
-  const valRatio = Number(values['val-ratio']);
-  const testRatio = Number(values['test-ratio']);
+  const valRatio = ratioOption('val-ratio', values['val-ratio']);
+  const testRatio = ratioOption('test-ratio', values['test-ratio']);
 
   if (cmd === 'eval') {
     if (!values.skills?.length) throw new Error('eval needs at least one --skills <dir>');
@@ -276,7 +293,7 @@ async function main() {
         return { name, skills };
       }),
     );
-    const res = await evaluateSkillSets({ ...common, tasks: chosen, sets, repeats: Number(values.repeats), splitLabel: values.split });
+    const res = await evaluateSkillSets({ ...common, tasks: chosen, sets, repeats: intOption('repeats', values.repeats, 1), splitLabel: values.split });
     console.log(`${values.split} tasks: ${chosen.length}`);
     console.log(`  no skills            ${f(res.baseline.accuracy)}`);
     for (const s of res.sets) {
@@ -284,6 +301,10 @@ async function main() {
         `  ${s.name.padEnd(20)} ${f(s.accuracy)}  vs no skills: p=${f(s.vsBaseline.p)} (${s.vsBaseline.significant ? 'significant' : 'not significant'})` +
           (s.vsFirst ? `; vs ${res.sets[0].name}: p=${f(s.vsFirst.p)}` : ''),
       );
+    }
+    if (graderErrors.length) {
+      console.error(`warning: ${graderErrors.length} row(s) could not be graded by --scorer-cmd and count as wrong (first: ${graderErrors[0]})`);
+      process.exitCode = 1;
     }
     if (values.report) await writeFile(values.report, JSON.stringify({ schema_version: SCHEMA_VERSION, ...(snakeKeys({ ...res, predictions: undefined, prompts: undefined }) as object) }, null, 2) + '\n');
     if (values['predictions-out']) {
@@ -300,18 +321,23 @@ async function main() {
     ...common,
     tasks,
     outDir: values.out!,
-    iterations: Number(values.iters),
-    runs: Number(values.runs),
+    iterations: intOption('iters', values.iters, 0),
+    runs: intOption('runs', values.runs, 1),
     resume: values.resume,
     force: values.force,
     valRatio,
     testRatio,
     runInfo,
     codeDiff,
-    trainSample: values['train-sample'] ? Number(values['train-sample']) : undefined,
+    trainSample: values['train-sample'] ? intOption('train-sample', values['train-sample'], 1) : undefined,
+    graderFailures: () => graderErrors.length,
     proposerSeesWiki: !values['proposer-no-wiki'],
     inferenceSeesWiki: values['inference-wiki'],
   });
+  if (graderErrors.length) {
+    console.error(`warning: ${graderErrors.length} row(s) could not be graded by --scorer-cmd and count as wrong (first: ${graderErrors[0]}); this run will not pass check`);
+    process.exitCode = 1;
+  }
   console.log(`validation: no skills ${result.meanBaselineVal.toFixed(3)} → best ${result.meanBestVal.toFixed(3)} (mean of ${result.runs.length} run(s))`);
   if (result.test) {
     const t = result.test;

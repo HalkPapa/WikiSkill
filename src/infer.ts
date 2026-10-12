@@ -79,6 +79,7 @@ const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ').replace(
 
 export function score(answer: string | null, expected: string, scorer: Scorer): boolean {
   if (answer === null) return false;
+  if (scorer !== 'exact' && scorer !== 'contains') throw new Error(`unknown scorer "${scorer}" (use exact, contains, or a scoreFn)`);
   return scorer === 'exact' ? norm(answer) === norm(expected) : norm(answer).includes(norm(expected));
 }
 
@@ -117,29 +118,39 @@ export async function runTask(llm: Llm, task: Task, r: Rollout): Promise<Trace> 
   const cwd = await mkdtemp(join(tmpdir(), 'wikiskill-infer-'));
   try {
     const tools = [...new Set([...(r.agentTools ?? []), ...(r.wikiDir ? ['Read'] : [])])];
-    if (task.workspace) await cp(task.workspace, cwd, { recursive: true });
+    if (task.workspace) await cp(task.workspace, cwd, { recursive: true, dereference: true }); // links are resolved, never kept
     if (tools.length > 0) await writeSkillDirs(r.skills, join(cwd, 'skills'));
     if (r.wikiDir) await cp(r.wikiDir, join(cwd, 'wiki'), { recursive: true });
     let text: string;
     let transcript: string;
     let model: string | undefined;
+    let error: string | undefined;
     const system = buildSystem(r.skills, { taskDesc: r.taskDesc, hasWorkspace: tools.length > 0, wikiAccess: !!r.wikiDir, template: r.promptTemplate });
     const promptSha = sha256(system);
     await r.onPrompt?.(promptSha, system);
-    try {
-      const reply = await llm({
-        role: 'infer',
-        system,
-        prompt: task.input.replaceAll('{workspace}', cwd),
-        tools,
-        cwd,
-        mcpConfig: r.mcpConfig,
-      });
+    // An environment failure is not a wrong answer: retry once, then flag the trace instead of scoring a silent 0.
+    let reply: Awaited<ReturnType<Llm>> | undefined;
+    for (let attempt = 0; attempt < 2 && reply === undefined; attempt++) {
+      try {
+        reply = await llm({
+          role: 'infer',
+          system,
+          prompt: task.input.replaceAll('{workspace}', cwd),
+          tools,
+          cwd,
+          mcpConfig: r.mcpConfig,
+        });
+      } catch (e) {
+        error = (e as Error).message;
+      }
+    }
+    if (reply !== undefined) {
+      error = undefined;
       text = replyText(reply);
       transcript = replyTranscript(reply);
       model = typeof reply === 'string' ? undefined : reply.model;
-    } catch (e) {
-      text = transcript = `[agent error] ${(e as Error).message}`;
+    } else {
+      text = transcript = `[agent error] ${error}`;
     }
     const answer = extractAnswer(text) ?? extractAnswer(transcript);
     return {
@@ -149,9 +160,10 @@ export async function runTask(llm: Llm, task: Task, r: Rollout): Promise<Trace> 
       expected: task.expected,
       output: transcript,
       answer,
-      correct: r.scoreFn ? await r.scoreFn(answer, task, { output: transcript, workspace: cwd }) : score(answer, task.expected, r.scorer),
+      correct: error ? false : r.scoreFn ? await r.scoreFn(answer, task, { output: transcript, workspace: cwd }) : score(answer, task.expected, r.scorer),
       systemPromptSha256: promptSha,
       ...(model ? { model } : {}),
+      ...(error ? { error } : {}),
     };
   } finally {
     await rm(cwd, { recursive: true, force: true });

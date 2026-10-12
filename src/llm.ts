@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { rmSync } from 'node:fs';
 import type { Llm, LlmCall, LlmReply, Role } from './types.js';
 
 export interface ClaudeCliOptions {
@@ -142,7 +143,9 @@ export async function resolveMcpConfig(file: string): Promise<{ path: string; so
   const expand = (v: unknown): unknown =>
     typeof v === 'string' ? v.replaceAll('{configdir}', dir) : Array.isArray(v) ? v.map(expand) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, expand(x)])) : v;
   const config = expand(JSON.parse(text));
-  const out = join(await mkdtemp(join(tmpdir(), 'wikiskill-mcp-')), 'mcp.json');
+  const tmp = await mkdtemp(join(tmpdir(), 'wikiskill-mcp-'));
+  const out = join(tmp, 'mcp.json');
   await writeFile(out, JSON.stringify(config, null, 2));
+  process.on('exit', () => rmSync(tmp, { recursive: true, force: true })); // the expanded copy may hold env values
   return { path: out, source, sha256: createHash('sha256').update(text).digest('hex') };
 }

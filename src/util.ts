@@ -69,3 +69,21 @@ export function unifiedDiff(a: string, b: string, name: string): string {
 
 /** Splits "Read,Bash(python3 *, -m x)" on commas outside parentheses. */
 export const splitTools = (s: string) => s.split(/,(?![^()]*\))/).map((t) => t.trim()).filter(Boolean);
+
+/** File-name form of a task id. Injective (distinct ids never share a file), unlike replacing odd characters by "_". */
+export const safeName = (id: string) =>
+  encodeURIComponent(id).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+
+/** Parses a non-negative integer CLI option; throws a readable error instead of letting NaN through. */
+export function intOption(name: string, value: string | undefined, min = 0): number {
+  const n = Number(value);
+  if (value === undefined || value.trim() === '' || !Number.isInteger(n) || n < min) throw new Error(`--${name} must be an integer >= ${min} (got "${value}")`);
+  return n;
+}
+
+/** Parses a ratio in [0, 1). */
+export function ratioOption(name: string, value: string | undefined): number {
+  const n = Number(value);
+  if (value === undefined || value.trim() === '' || !Number.isFinite(n) || n < 0 || n >= 1) throw new Error(`--${name} must be a number in [0, 1) (got "${value}")`);
+  return n;
+}

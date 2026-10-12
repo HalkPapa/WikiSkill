@@ -94,23 +94,25 @@ export async function maintainWiki(llm: Llm, store: Store, traces: Trace[], iter
     await store.appendLog(`## iter ${iteration}\nWiki maintainer returned unparseable output; wiki unchanged.`);
     return 'unparseable';
   }
+  // The reply is model output: check every shape before using it, so a malformed field costs one op, not the run.
+  const list = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
   let created = 0;
   let updated = 0;
   let failed = 0;
-  for (const p of parsed.create_patterns ?? []) {
-    if (typeof p?.content === 'string' && (await store.writePattern(p.name, p.content))) created++;
+  for (const p of list(parsed.create_patterns) as { name?: unknown; content?: unknown }[]) {
+    if (typeof p?.name === 'string' && typeof p?.content === 'string' && (await store.writePattern(p.name, p.content))) created++;
     else failed++;
   }
-  for (const u of parsed.update_patterns ?? []) {
+  for (const u of list(parsed.update_patterns) as { name?: unknown; edits?: unknown }[]) {
     const current = typeof u?.name === 'string' ? pages.get(`patterns/${u.name}`) : undefined;
-    const next = current === undefined ? null : applyEdits(current, u.edits, false);
-    if (next !== null && (await store.writePattern(u.name, next))) updated++;
+    const next = current === undefined ? null : applyEdits(current, u.edits as EditOp[], false);
+    if (next !== null && typeof u.name === 'string' && (await store.writePattern(u.name, next))) updated++;
     else failed++;
   }
   if (typeof parsed.update_index === 'string' && parsed.update_index.trim()) await store.writeIndex(parsed.update_index);
   else await store.rebuildIndex();
   const summary = `${created} created, ${updated} updated${failed ? `, ${failed} invalid op(s) skipped` : ''}`;
-  const note = (parsed.append_log ?? '').trim();
+  const note = (typeof parsed.append_log === 'string' ? parsed.append_log : '').trim();
   await store.appendLog(/^#/.test(note) ? note : `## iter ${iteration}\n${note}`);
   return summary;
 }

@@ -2,6 +2,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { SCHEMA_VERSION, parsePredictions, sha256, skillsDigest } from './handoff.js';
 import { readSkillDirs } from './store.js';
+import { safeName } from './util.js';
 
 export interface CheckReport {
   dir: string;
@@ -23,7 +24,7 @@ export async function checkRun(dir: string): Promise<CheckReport> {
   if (manifest.schema_version > SCHEMA_VERSION) bad(`manifest schema_version ${manifest.schema_version} is newer than supported (${SCHEMA_VERSION})`);
   if (manifest.status !== 'completed') bad(`run status is "${manifest.status}", not "completed"${manifest.error ? `: ${manifest.error}` : ''}`);
   if (manifest.environment?.tool?.git_dirty === true) notes.push('the code that produced this run had uncommitted changes (environment.tool.git_dirty)');
-  if (!manifest.environment?.tool?.git_commit || manifest.environment.tool.git_commit === 'unknown') notes.push('no git commit recorded for the producing code');
+  if (!manifest.environment?.tool?.git_commit) notes.push('no git commit recorded for the producing code (not a git checkout?): the code cannot be pinned');
 
   if (manifest.guarantees?.test_split_used_during_evolution !== false) bad('manifest.guarantees.test_split_used_during_evolution is not false');
 
@@ -36,6 +37,11 @@ export async function checkRun(dir: string): Promise<CheckReport> {
       if (text === null) bad(`${file} is missing`);
       else if (sha256(text) !== hashes[key]) bad(`${file} was changed after the run (SHA-256 differs from manifest.files_sha256.${key})`);
     }
+
+  // environment failures are not wrong answers: a run with failed agent or grader calls has distorted scores
+  const q = manifest.quality;
+  if (q?.agent_errors > 0) bad(`${q.agent_errors} agent call(s) failed (timeouts, rate limits, crashes) and were scored as wrong`);
+  if (q?.grader_failures > 0) bad(`${q.grader_failures} external-grader call(s) failed and were scored as wrong`);
 
   // splits
   const splits = await readJson(join(dir, 'splits.json')).catch(() => null);
@@ -59,6 +65,7 @@ export async function checkRun(dir: string): Promise<CheckReport> {
     bad((e as Error).message);
   }
   for (const r of rows) {
+    if (r.error) bad(`row ${r.task_id}/${r.condition} is an agent failure, not an answer: ${String(r.error).slice(0, 80)}`);
     if (r.run !== manifest.run) bad(`row for ${r.task_id}/${r.condition} has run "${r.run}", manifest says "${manifest.run}"`);
     const sp = splitOf.get(r.task_id);
     if (splits && sp !== r.split) bad(`row ${r.task_id}/${r.condition} says split "${r.split}" but splits.json ${sp ? `puts it in "${sp}"` : 'does not list the task at all'}`);
@@ -86,7 +93,10 @@ export async function checkRun(dir: string): Promise<CheckReport> {
 
   // tasks.jsonl must agree with splits.json
   const tasksText = await readFile(join(dir, 'tasks.jsonl'), 'utf8').catch(() => null);
-  if (tasksText === null) bad('tasks.jsonl is missing');
+  if (tasksText === null) {
+    if (manifest.files_sha256) bad('tasks.jsonl is missing');
+    else notes.push('tasks.jsonl is missing (run produced by an older version)');
+  }
   else {
     const inTasks = new Map<string, string>();
     for (const line of tasksText.split('\n').filter((l) => l.trim())) {
@@ -125,18 +135,22 @@ export async function checkRun(dir: string): Promise<CheckReport> {
   notes.push(`${skills.size} skill(s): ${[...skills.keys()].join(', ') || '(none)'}`);
 
   // no test leakage into training traces
-  const testIds = new Set<string>(splits?.test ?? []);
+  const testFiles = new Set<string>((splits?.test ?? []).map((id: string) => safeName(String(id))));
   for (const it of (await readdir(join(dir, 'raw')).catch(() => [] as string[])))
     for (const f of await readdir(join(dir, 'raw', it)).catch(() => [] as string[]))
-      if (testIds.has(f.replace(/\.json$/, ''))) bad(`raw/${it}/${f} is a test task trace`);
+      if (testFiles.has(f.replace(/\.json$/, ''))) bad(`raw/${it}/${f} is a test task trace`);
 
   return { dir, ok: problems.length === 0, problems, notes };
 }
 
 /** Checks <dir> if it holds a manifest, otherwise every run-N subdirectory (a multi-run experiment). */
 export async function checkRuns(dir: string): Promise<CheckReport[]> {
-  if (await readFile(join(dir, 'manifest.json')).then(() => true, () => false)) return [await checkRun(dir)];
   const subs = (await readdir(dir).catch(() => [] as string[])).filter((n) => /^run-\d+$/.test(n)).sort();
+  if (await readFile(join(dir, 'manifest.json')).then(() => true, () => false)) {
+    if (subs.length === 0) return [await checkRun(dir)];
+    // a single run and run-N directories in one place: the parent's manifest would hide the others
+    return [{ dir, ok: false, problems: [`${dir} holds both a single run (manifest.json) and ${subs.join(', ')}; check each separately or use a clean directory`], notes: [] }];
+  }
   if (subs.length === 0) return [await checkRun(dir)];
   return Promise.all(subs.map((n) => checkRun(join(dir, n))));
 }

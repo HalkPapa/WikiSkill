@@ -44,6 +44,8 @@ export interface PredictionRow {
   model?: string;
   /** When the row was written (ISO 8601; optional). Test rows are written after all gate rollouts. */
   created_at?: string;
+  /** Optional. Present when the agent call itself failed (after one retry): `correct` is then false but not a real verdict. */
+  error?: string;
 }
 
 export const PREDICTION_REQUIRED_KEYS = [
@@ -70,6 +72,7 @@ export function predictionRow(
     system_prompt_sha256: t.systemPromptSha256 ?? '',
     output: t.output,
     ...(t.model ? { model: t.model } : {}),
+    ...(t.error ? { error: t.error } : {}),
     created_at: new Date().toISOString(),
   };
 }

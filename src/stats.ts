@@ -10,6 +10,8 @@ function mulberry32(seed: number) {
   };
 }
 
+const EPS = 1e-9;
+
 export interface BootstrapResult {
   meanA: number;
   meanB: number;
@@ -38,8 +40,9 @@ export function pairedBootstrap(a: number[], b: number[], iterations = 1000, see
   for (let it = 0; it < iterations; it++) {
     let sum = 0;
     for (let j = 0; j < n; j++) sum += diff[Math.floor(rng() * n)];
-    if (sum / n <= 0) notBetter++;
-    if (sum / n >= 0) notWorse++;
+    // Per-task scores can be fractions (averages over runs), so sums are not exact: compare with a tolerance.
+    if (sum / n <= EPS) notBetter++;
+    if (sum / n >= -EPS) notWorse++;
   }
   const p = notBetter / iterations;
   const pTwoSided = Math.min(1, 2 * Math.min(p, notWorse / iterations));

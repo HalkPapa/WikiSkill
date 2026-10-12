@@ -1,6 +1,7 @@
-import { cp, mkdir, readdir, readFile, rm, stat, writeFile, appendFile } from 'node:fs/promises';
+import { cp, mkdir, readdir, readFile, rename, rm, stat, writeFile, appendFile } from 'node:fs/promises';
 import { dirname, join, normalize, sep } from 'node:path';
 import type { SkillSet, Trace } from './types.js';
+import { safeName } from './util.js';
 
 export class Store {
   constructor(readonly root: string) {}
@@ -19,7 +20,7 @@ export class Store {
   async writeTrace(t: Trace) {
     const dir = this.path('raw', `iter-${String(t.iteration).padStart(2, '0')}`);
     await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, `${t.taskId.replace(/[^\w.-]/g, '_')}.json`), JSON.stringify(t, null, 2));
+    await writeFile(join(dir, `${safeName(t.taskId)}.json`), JSON.stringify(t, null, 2));
   }
 
   async readWiki(): Promise<Map<string, string>> {
@@ -75,6 +76,28 @@ export class Store {
   async lastIteration(): Promise<number> {
     const names = await readdir(this.path('raw')).catch(() => [] as string[]);
     return Math.max(0, ...names.map((n) => Number(n.match(/^iter-(\d+)$/)?.[1] ?? 0)));
+  }
+
+  /**
+   * What this directory holds: nothing relevant ('empty'), the leftovers of a WikiSkill run ('run'), or files that
+   * merely share names with the run layout, e.g. someone's own raw/ or skills/ ('foreign'). Reset and resume only ever
+   * touch a 'run'; a fresh run refuses a 'foreign' directory even with --force.
+   */
+  async state(): Promise<'empty' | 'run' | 'foreign'> {
+    const manifest = await this.readText('manifest.json');
+    let isManifest = false;
+    try {
+      const m = JSON.parse(manifest);
+      isManifest = typeof m?.schema_version === 'number' && typeof m?.run === 'string' && m?.options !== undefined;
+    } catch {
+      /* not a manifest */
+    }
+    if (isManifest || (await stat(this.path('wiki', 'skill-impact.md')).then(() => true, () => false))) return 'run';
+    const present = async (p: string) => (await readdir(this.path(p)).catch(() => [])).length > 0;
+    const exists = (p: string) => stat(this.path(p)).then(() => true, () => false);
+    for (const d of ['raw', 'wiki', 'skills', 'results']) if (await present(d)) return 'foreign';
+    for (const f of ['manifest.json', 'report.json', 'splits.json', 'tasks.jsonl']) if (await exists(f)) return 'foreign';
+    return 'empty';
   }
 
   /** True if a previous run left traces, wiki pages, skills or audit records here. */
@@ -134,7 +157,10 @@ export class Store {
 
   /** Copies a layer directory (e.g. 'wiki', 'raw', 'skills') into another workspace. */
   async copyInto(layer: 'wiki' | 'raw' | 'skills', destRoot: string) {
-    await cp(this.path(layer), join(destRoot, layer), { recursive: true });
+    // A layer that does not exist yet (e.g. no wiki before the first iteration) becomes an empty directory.
+    const exists = await stat(this.path(layer)).then(() => true, () => false);
+    if (exists) await cp(this.path(layer), join(destRoot, layer), { recursive: true, dereference: true });
+    else await mkdir(join(destRoot, layer), { recursive: true });
   }
 }
 
@@ -149,8 +175,11 @@ async function readTree(dir: string, prefix = ''): Promise<Record<string, string
 }
 
 /** Writes skills/<name>/{SKILL.md,PURPOSE.md,...bundled files} under `dir`, replacing what was there. */
-export async function writeSkillDirs(skills: SkillSet, dir: string) {
+export async function writeSkillDirs(skills: SkillSet, target: string) {
+  // Write next to the target and swap it in, so a failure never leaves the adopted skills half-deleted.
+  const dir = `${target}.writing`;
   await rm(dir, { recursive: true, force: true });
+  await mkdir(dir, { recursive: true });
   for (const [name, f] of skills) {
     await mkdir(join(dir, name), { recursive: true });
     await writeFile(join(dir, name, 'SKILL.md'), f.skillMd);
@@ -160,6 +189,8 @@ export async function writeSkillDirs(skills: SkillSet, dir: string) {
       await writeFile(join(dir, name, rel), content);
     }
   }
+  await rm(target, { recursive: true, force: true });
+  await rename(dir, target);
 }
 
 /** Reads <root>/<name>/{SKILL.md,PURPOSE.md,...} for every skill directory; directories without SKILL.md are skipped. */

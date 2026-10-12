@@ -34,6 +34,8 @@ export interface Trace {
   systemPromptSha256?: string;
   /** Resolved model id that produced the reply (e.g. claude-haiku-4-5-20251001), when known. */
   model?: string;
+  /** Set when the agent call itself failed (timeout, rate limit, crash): the verdict is not a real answer. */
+  error?: string;
 }
 
 export type Role = 'infer' | 'wiki' | 'propose';

@@ -1,4 +1,5 @@
 import { mkdtemp, rm } from 'node:fs/promises';
+import { posix } from 'node:path';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Llm, SkillSet, Trace } from './types.js';
@@ -71,18 +72,47 @@ export type Proposal =
   | { action: 'no_action' };
 
 const NAME = /^[a-z0-9][a-z0-9_-]{0,62}$/;
-const RESOURCE_PATH = /^(?!.*\.\.)(?!\/)[\w][\w./-]*$/;
+const RESERVED = ['skill.md', 'purpose.md'];
 
+/**
+ * Bundled files must be plain relative paths in canonical form (no "./", "..", empty segments, trailing slash), must
+ * not shadow SKILL.md / PURPOSE.md, and no path may be both a file and the directory of another (that fails on disk).
+ */
 export function validResources(res: unknown): res is Resource[] {
-  return (
-    Array.isArray(res) &&
-    res.length <= 20 &&
-    res.every(
-      (r) =>
-        r && typeof r.path === 'string' && typeof r.content === 'string' && RESOURCE_PATH.test(r.path) &&
-        !['skill.md', 'purpose.md'].includes(r.path.toLowerCase()),
-    )
-  );
+  if (!Array.isArray(res) || res.length > 20) return false;
+  const paths: string[] = [];
+  for (const r of res) {
+    if (!r || typeof r.path !== 'string' || typeof r.content !== 'string') return false;
+    const p: string = r.path;
+    if (!/^[\w][\w./-]*$/.test(p) || posix.normalize(p) !== p || p.endsWith('/') || p.split('/').length > 6) return false;
+    if (p.split('/').some((seg) => seg === '' || seg === '.' || seg === '..')) return false;
+    if (RESERVED.includes(p.split('/')[0].toLowerCase())) return false;
+    paths.push(p);
+  }
+  return new Set(paths).size === paths.length && !collides(paths);
+}
+
+/** True if one path is a prefix directory of another (e.g. "a" and "a/b"). */
+const collides = (paths: string[]) => paths.some((p) => paths.some((q) => q !== p && q.startsWith(`${p}/`)));
+
+/** Copies only the fields of a parsed proposal that have the right types; anything else makes it invalid (null). */
+export function sanitizeProposal(p: unknown): Proposal | null {
+  if (!p || typeof p !== 'object') return null;
+  const o = p as Record<string, unknown>;
+  if (o.action === 'no_action') return { action: 'no_action' };
+  if ((o.action !== 'create' && o.action !== 'patch') || typeof o.name !== 'string' || !NAME.test(o.name)) return null;
+  const rationale = typeof o.rationale === 'string' ? o.rationale : undefined;
+  let resources: Resource[] | undefined;
+  if (o.resources !== undefined) {
+    if (!validResources(o.resources)) return null;
+    resources = o.resources.map((r) => ({ path: r.path, content: r.content }));
+  }
+  if (o.action === 'create') {
+    if (typeof o.skill_md !== 'string') return null;
+    return { action: 'create', name: o.name, skill_md: o.skill_md, ...(typeof o.purpose_md === 'string' ? { purpose_md: o.purpose_md } : {}), ...(resources ? { resources } : {}), ...(rationale ? { rationale } : {}) };
+  }
+  if (!Array.isArray(o.edits)) return null;
+  return { action: 'patch', name: o.name, edits: o.edits as EditOp[], ...(resources ? { resources } : {}), ...(rationale ? { rationale } : {}) };
 }
 
 export interface ProposeOptions {
@@ -120,33 +150,29 @@ export async function propose(
     `# Training outcome: ${pass}/${traces.length} passed\n${summary || '(all passed)'}`,
   ].join('\n\n');
 
-  // Without the wiki the proposer works in a copy holding only raw/ and skills/.
-  const hidden = useWiki ? undefined : await mkdtemp(join(tmpdir(), 'wikiskill-propose-'));
+  // The proposer works in a throw-away copy holding only what it may read: raw/ (training traces), skills/ and, unless
+  // the wiki is ablated, wiki/. It must never see tasks.jsonl, splits.json, results/ or manifest.json (validation and
+  // test truths live there).
+  const hidden = await mkdtemp(join(tmpdir(), 'wikiskill-propose-'));
   try {
-    if (hidden) {
-      await store.copyInto('raw', hidden);
-      await store.copyInto('skills', hidden);
-    }
+    await store.copyInto('raw', hidden);
+    await store.copyInto('skills', hidden);
+    if (useWiki) await store.copyInto('wiki', hidden);
     const call = (extra = '') =>
-      llm({ role: 'propose', system: system(o.taskDesc ?? 'the given tasks', useWiki), prompt: prompt + extra, tools: ['Read'], cwd: hidden ?? store.root });
+      llm({ role: 'propose', system: system(o.taskDesc ?? 'the given tasks', useWiki), prompt: prompt + extra, tools: ['Read'], cwd: hidden });
 
     let reply = await call();
     const need = Math.min(4, failures.length);
     const reads = countTraceReads(replyTranscript(reply));
     const hasTranscript = typeof reply !== 'string';
-    const p0 = extractJson<Proposal>(replyText(reply));
+    const p0 = sanitizeProposal(extractJson<unknown>(replyText(reply)));
     if (hasTranscript && p0 && p0.action !== 'no_action' && reads < need) {
       o.log?.(`proposer read ${reads}/${need} required traces; asking once more`);
       reply = await call(`\n\nREMINDER: your previous attempt opened only ${reads} trace file(s). Read at least ${need} failing traces under raw/iter-${String(iteration).padStart(2, '0')}/ before you finish.`);
     }
-    const p = extractJson<Proposal>(replyText(reply));
-    if (!p) return null;
-    if (p.action === 'no_action') return p;
-    if ((p.action !== 'create' && p.action !== 'patch') || !NAME.test(p.name ?? '')) return null;
-    if (p.resources !== undefined && !validResources(p.resources)) return null;
-    return p;
+    return sanitizeProposal(extractJson<unknown>(replyText(reply)));
   } finally {
-    if (hidden) await rm(hidden, { recursive: true, force: true });
+    await rm(hidden, { recursive: true, force: true });
   }
 }
 
@@ -175,6 +201,7 @@ export function applyProposal(skills: SkillSet, p: Proposal, iteration = 0): Ski
   if (md === null || !frontmatter(p.name).test(md)) return null; // frontmatter intact
   const note = `- iter ${iteration}: patched${p.rationale ? ` — ${p.rationale.replace(/\s+/g, ' ')}` : ''}`;
   const files = { ...(prev.files ?? {}), ...toRecord(p.resources) };
+  if (collides(Object.keys(files))) return null; // a new file would need an existing file to be a directory
   next.set(p.name, {
     skillMd: md,
     purposeMd: `${prev.purposeMd.trimEnd()}\n${note}\n`,
