@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import type { Llm, Scorer, SkillSet, Task, Trace } from './types.js';
 import { Store } from './store.js';
-import { runTask } from './infer.js';
+import { runTask, type ScoreFn } from './infer.js';
 import { maintainWiki } from './wiki.js';
 import { applyProposal, propose } from './propose.js';
 import { pairedBootstrap, type BootstrapResult } from './stats.js';
@@ -14,6 +14,8 @@ export interface EvolveOptions {
   iterations: number;
   llm: Llm;
   scorer?: Scorer;
+  /** Custom grader; overrides `scorer`. */
+  scoreFn?: ScoreFn;
   concurrency?: number;
   /** Share of tasks without an explicit split that become validation / test tasks. */
   valRatio?: number;
@@ -88,6 +90,7 @@ export async function evolve(o: EvolveOptions): Promise<EvolveResult> {
       runTask(o.llm, t, {
         skills,
         scorer: o.scorer ?? 'exact',
+        scoreFn: o.scoreFn,
         iteration,
         taskDesc: o.taskDesc,
         agentTools: o.agentTools,

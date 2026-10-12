@@ -69,10 +69,33 @@ node dist/src/cli.js evolve --tasks examples/tasks-hidden-rule.jsonl --out runs/
 | `--agent-tools "Read,Bash(python3 *)"` | Claude Code tools for the task agent (default none) |
 | `--proposer-no-wiki` | ablation: hide the wiki from the skill proposer |
 | `--inference-wiki` | ablation: let the task agent read the wiki |
+| `--scorer exact\|contains` | built-in answer matching (default `exact`) |
+| `--scorer-cmd "<cmd>"` | external grader instead (see [Plugging in a grader](#plugging-in-a-grader)) |
 | `--task-desc "<text>"` | completes "an expert agent that solves …" in the prompts |
 
 With a test split, the final skills and a no-skill baseline are scored on it, and a paired bootstrap
 (1,000 resamples, one-sided, p < 0.05) compares them. Results are written to `report.json`.
+
+## Evaluating and transferring skills (`eval`)
+
+`eval` scores existing skill directories without evolving anything, e.g. the paper's cross-model transfer check (§4.2.2):
+run skills evolved with one model under another model and compare them with that model's own skills and with no skills.
+
+```sh
+node dist/src/cli.js eval --tasks tasks.jsonl --split test --infer-model haiku \
+  --skills own=runs/haiku/skills --skills from-sonnet=runs/sonnet/skills --repeats 3
+```
+
+A no-skill baseline is always scored; each set gets a paired-bootstrap p-value against it, and later sets also against
+the first. `--split` is `test` (default), `val`, `train` or `all`; the split rules are the same as in `evolve`, so the
+same ratios select the same tasks. `--report <file>` saves the result as JSON.
+
+### Plugging in a grader
+
+The built-in scorers only compare strings. For benchmarks that need a real grader (spreadsheet diffs, simulators, …),
+pass `--scorer-cmd "<command>"`. It is run through `sh -c` once per answer, receives
+`{"id","input","expected","answer"}` as JSON on stdin, and prints `true`/`false`, `1`/`0` or `{"correct": true}`.
+A failing command or timeout (60 s) counts as wrong. The command runs on your machine with your permissions.
 
 ## Directory layout (as in the paper)
 
@@ -95,7 +118,8 @@ report.json                 validation/test results of the run
 Implemented as described: the four-step loop and strict gating, the three layers, atomic one-skill proposals,
 patch-based edits (`append` / `replace` / `insert_after`), the Wiki Maintainer and Skill Proposer prompts
 (Appendix E.2 / E.3, adapted), trace sampling (Appendix C), skills injected in full into the agent prompt, the wiki
-hidden from the agent, early stop at 1.0, a test split, multi-run averaging, paired bootstrap, and both wiki ablations.
+hidden from the agent, early stop at 1.0, a test split, multi-run averaging, paired bootstrap, both wiki ablations, and
+a command to run the cross-model transfer comparison (`eval`; the experiments themselves have not been run).
 
 Not reproduced: the five benchmarks (LiveMathematicianBench, SealQA, SpreadsheetBench, OfficeQA, ALFWorld) and their
 environments, the paper's open-weight/Gemini models (a vLLM-compatible backend exists but is untested against a real
@@ -114,7 +138,7 @@ paper's ALFWorld case study.
 
 ## Tests
 
-`npm test` – 19 tests with a mock LLM and a local mock server; no network or API calls.
+`npm test` – 24 tests with a mock LLM and a local mock server; no network or API calls.
 
 ## Credits and original ideas
 

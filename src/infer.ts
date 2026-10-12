@@ -57,9 +57,13 @@ export function score(answer: string | null, expected: string, scorer: Scorer): 
   return scorer === 'exact' ? norm(answer) === norm(expected) : norm(answer).includes(norm(expected));
 }
 
+/** Custom correctness check (e.g. a benchmark-specific grader). Overrides the built-in `scorer` when given. */
+export type ScoreFn = (answer: string | null, task: Task) => boolean | Promise<boolean>;
+
 export interface Rollout {
   skills: SkillSet;
   scorer: Scorer;
+  scoreFn?: ScoreFn;
   iteration: number;
   taskDesc?: string;
   /** Environment tools for the agent, e.g. ["Read", "Bash(python3 *)"]. Default: none. */
@@ -101,7 +105,7 @@ export async function runTask(llm: Llm, task: Task, r: Rollout): Promise<Trace> 
       expected: task.expected,
       output: transcript,
       answer,
-      correct: score(answer, task.expected, r.scorer),
+      correct: r.scoreFn ? await r.scoreFn(answer, task) : score(answer, task.expected, r.scorer),
     };
   } finally {
     await rm(cwd, { recursive: true, force: true });

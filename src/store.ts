@@ -67,17 +67,8 @@ export class Store {
     await writeSkillDirs(skills, this.path('skills'));
   }
 
-  async readSkills(): Promise<SkillSet> {
-    const skills: SkillSet = new Map();
-    const root = this.path('skills');
-    for (const e of await readdir(root, { withFileTypes: true }).catch(() => [])) {
-      if (!e.isDirectory()) continue;
-      const files = await readTree(join(root, e.name));
-      const { 'SKILL.md': skillMd, 'PURPOSE.md': purposeMd, ...rest } = files;
-      if (skillMd === undefined) continue;
-      skills.set(e.name, { skillMd, purposeMd: purposeMd ?? '', ...(Object.keys(rest).length ? { files: rest } : {}) });
-    }
-    return skills;
+  readSkills(): Promise<SkillSet> {
+    return readSkillDirs(this.path('skills'));
   }
 
   /** Highest `raw/iter-NN` number present (0 if none), so a resumed run continues the numbering. */
@@ -132,4 +123,17 @@ export async function writeSkillDirs(skills: SkillSet, dir: string) {
       await writeFile(join(dir, name, rel), content);
     }
   }
+}
+
+/** Reads <root>/<name>/{SKILL.md,PURPOSE.md,...} for every skill directory; directories without SKILL.md are skipped. */
+export async function readSkillDirs(root: string): Promise<SkillSet> {
+  const skills: SkillSet = new Map();
+  for (const e of await readdir(root, { withFileTypes: true }).catch(() => [])) {
+    if (!e.isDirectory()) continue;
+    const files = await readTree(join(root, e.name));
+    const { 'SKILL.md': skillMd, 'PURPOSE.md': purposeMd, ...rest } = files;
+    if (skillMd === undefined) continue;
+    skills.set(e.name, { skillMd, purposeMd: purposeMd ?? '', ...(Object.keys(rest).length ? { files: rest } : {}) });
+  }
+  return skills;
 }

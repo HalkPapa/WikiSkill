@@ -27,9 +27,11 @@ Skill names are chosen by the proposer LLM per run; there is no fixed list in th
 Follows the paper's loop, layout, Appendix C sampling and Appendix E.2 / E.3 prompts. What still differs:
 
 **Not implemented**
-- The five benchmarks and their environments (datasets, ALFWorld simulator, spreadsheet tooling), and the
+- The five benchmarks and their environments (datasets, ALFWorld simulator, spreadsheet tooling; benchmark graders can
+  be plugged in with `--scorer-cmd`), and the
   per-benchmark inference prompts of Appendix E.1 (ours is one generic prompt; `--task-desc` fills in the task).
-- The baselines Trace2Skill, EvoSkill and SkillOpt, and the cross-model skill-transfer experiments.
+- The baselines Trace2Skill, EvoSkill and SkillOpt. Cross-model skill transfer can be run with `wikiskill eval`,
+  but the experiments themselves have not been run.
 - The paper's models (Qwen-3.5/3.6, Gemma-4, Gemini-3.5-Flash). A text-only OpenAI-compatible backend
   (`--infer-backend openai`, e.g. vLLM) exists but has only been tested against a mock server.
 
