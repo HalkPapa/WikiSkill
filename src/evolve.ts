@@ -123,7 +123,7 @@ export async function evolve(o: EvolveOptions): Promise<EvolveResult> {
       task_desc: o.taskDesc ?? null,
       agent_tools: o.agentTools ?? [],
       agent_prompt_sha256: o.agentPrompt === undefined ? null : sha256(o.agentPrompt),
-      agent_mcp_config: o.agentMcpConfig ?? null,
+      uses_mcp: o.agentMcpConfig !== undefined,
       proposer_sees_wiki: o.proposerSeesWiki ?? true,
       inference_sees_wiki: o.inferenceSeesWiki ?? false,
       resume: !!o.resume,

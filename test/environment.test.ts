@@ -72,5 +72,19 @@ test('manifest records the prompt template hash and MCP config', async () => {
   });
   const m = JSON.parse(await readFile(join(out, 'manifest.json'), 'utf8'));
   assert.equal(m.options.agent_prompt_sha256, sha256(tpl));
-  assert.equal(m.options.agent_mcp_config, '/c/mcp.json');
+  assert.equal(m.options.uses_mcp, true);
+});
+
+test('resolveMcpConfig expands {configdir} and records the source file', async () => {
+  const { resolveMcpConfig } = await import('../src/llm.js');
+  const dir = await mkdtemp(join(tmpdir(), 'ws-mcp-'));
+  const raw = JSON.stringify({ mcpServers: { env: { command: 'node', args: ['{configdir}/server.mjs', '--x'], env: { ROOT: '{configdir}' } } } });
+  await writeFile(join(dir, 'mcp.json'), raw);
+  const r = await resolveMcpConfig(join(dir, 'mcp.json'));
+  const cfg = JSON.parse(await readFile(r.path, 'utf8'));
+  assert.deepEqual(cfg.mcpServers.env.args, [`${dir}/server.mjs`, '--x']);
+  assert.equal(cfg.mcpServers.env.env.ROOT, dir);
+  assert.equal(r.source, join(dir, 'mcp.json'));
+  assert.equal(r.sha256, sha256(raw));
+  assert.notEqual(r.path, r.source);
 });

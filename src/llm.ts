@@ -123,3 +123,24 @@ export function openAiCompatible(o: OpenAiCompatibleOptions): Llm {
 export function routeLlm(inference: Llm, meta: Llm): Llm {
   return (call) => (call.role === 'infer' ? inference(call) : meta(call));
 }
+
+/**
+ * The agent runs in a throw-away working directory, so MCP config paths must not be relative to it. Returns a copy
+ * of the config in which `{configdir}` (the directory holding the original file) is expanded in every server's
+ * command, args, env values and url, plus the original file's absolute path and SHA-256.
+ */
+export async function resolveMcpConfig(file: string): Promise<{ path: string; source: string; sha256: string }> {
+  const { mkdtemp, readFile, writeFile } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { dirname, join, resolve } = await import('node:path');
+  const { createHash } = await import('node:crypto');
+  const source = resolve(file);
+  const text = await readFile(source, 'utf8');
+  const dir = dirname(source);
+  const expand = (v: unknown): unknown =>
+    typeof v === 'string' ? v.replaceAll('{configdir}', dir) : Array.isArray(v) ? v.map(expand) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, expand(x)])) : v;
+  const config = expand(JSON.parse(text));
+  const out = join(await mkdtemp(join(tmpdir(), 'wikiskill-mcp-')), 'mcp.json');
+  await writeFile(out, JSON.stringify(config, null, 2));
+  return { path: out, source, sha256: createHash('sha256').update(text).digest('hex') };
+}

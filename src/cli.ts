@@ -13,7 +13,7 @@ import { rescore } from './rescore.js';
 import { splitTasks } from './evolve.js';
 import { runExperiment } from './experiment.js';
 import type { ScoreFn } from './infer.js';
-import { claudeCli, openAiCompatible, routeLlm } from './llm.js';
+import { claudeCli, openAiCompatible, resolveMcpConfig, routeLlm } from './llm.js';
 import { commandScorer } from './scorer.js';
 import { readSkillDirs } from './store.js';
 import type { Llm, Scorer, Task } from './types.js';
@@ -69,7 +69,8 @@ common options
   --agent-tools "<specs>"  comma-separated Claude Code tools for the task agent, e.g. "Read,Bash(python3 *)",
                          "mcp__env__lookup". NOT a real sandbox: allowed Bash patterns run on this machine.
   --agent-prompt <file>  agent system prompt template containing {skill_section} (see benchmarks/prompts/)
-  --agent-mcp-config <file>  MCP servers that expose a benchmark environment to the agent as tools
+  --agent-mcp-config <file>  MCP servers that expose a benchmark environment to the agent as tools; write server
+                         paths as {configdir}/server.mjs (the agent runs in a temp dir, so relative paths would break)
 
 tasks.jsonl: one {"id","input","expected"[,"split":"train"|"val"|"test"][,"workspace":"<dir>"]} object per line.
   "workspace" is a directory (relative to the tasks file) copied into the agent's working directory; {workspace} in
@@ -181,6 +182,7 @@ async function main() {
   const llm: Llm = routeLlm(inference, meta);
   const agentPrompt = values['agent-prompt'] ? await readFile(values['agent-prompt'], 'utf8') : undefined;
   if (agentPrompt !== undefined && !agentPrompt.includes('{skill_section}')) throw new Error(`${values['agent-prompt']} must contain {skill_section}`);
+  const mcp = values['agent-mcp-config'] ? await resolveMcpConfig(values['agent-mcp-config']) : undefined;
   const common = {
     llm,
     scorer: values.scorer as Scorer,
@@ -190,7 +192,7 @@ async function main() {
     taskDesc: values['task-desc'],
     agentTools,
     agentPrompt,
-    agentMcpConfig: values['agent-mcp-config'],
+    agentMcpConfig: mcp?.path,
     log,
   };
   const sh = promisify(execFile);
@@ -207,6 +209,7 @@ async function main() {
     tasks_file: { path: values.tasks, sha256: createHash('sha256').update(tasksText).digest('hex'), count: tasks.length },
     scorer_command: values['scorer-cmd'] ?? null,
     agent_prompt_file: values['agent-prompt'] ?? null,
+    agent_mcp_config: mcp ? { path: mcp.source, sha256: mcp.sha256 } : null,
   };
   const valRatio = Number(values['val-ratio']);
   const testRatio = Number(values['test-ratio']);

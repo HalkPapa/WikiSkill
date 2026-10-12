@@ -1,0 +1,5 @@
+{
+  "mcpServers": {
+    "env": { "command": "node", "args": ["{configdir}/lookup-server.mjs"] }
+  }
+}
