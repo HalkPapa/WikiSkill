@@ -133,7 +133,7 @@ test('eval emits predictions in the same schema, with prompts', async () => {
 test('the JSON schema files list the same required keys as the code, and the CLI re-scores a file', async () => {
   const schema = JSON.parse(await readFile(join(process.cwd(), 'docs/schema/prediction-row.schema.json'), 'utf8'));
   assert.deepEqual([...schema.required].sort(), [...PREDICTION_REQUIRED_KEYS].sort());
-  assert.deepEqual(Object.keys(schema.properties).filter((k) => !['correct_original', 'model', 'created_at'].includes(k)).sort(), [...PREDICTION_REQUIRED_KEYS].sort()); // the rest are optional
+  assert.deepEqual(Object.keys(schema.properties).filter((k) => !['correct_original', 'model', 'created_at', 'error'].includes(k)).sort(), [...PREDICTION_REQUIRED_KEYS].sort()); // the rest are optional
   const manifestSchema = JSON.parse(await readFile(join(process.cwd(), 'docs/schema/manifest.schema.json'), 'utf8'));
 
   const out = await mkdtemp(join(tmpdir(), 'ws-cli-'));
