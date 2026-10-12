@@ -1,0 +1,6 @@
+{"id":"rev1","input":"Reverse the string 'stressed' and answer with the result only.","expected":"desserts"}
+{"id":"rev2","input":"Reverse the string 'drawer' and answer with the result only.","expected":"reward"}
+{"id":"rev3","input":"Reverse the string 'strawberry' and answer with the result only.","expected":"yrrebwarts"}
+{"id":"cnt1","input":"How many times does the letter 'r' appear in 'strawberry'?","expected":"3"}
+{"id":"cnt2","input":"How many times does the letter 's' appear in 'mississippi'?","expected":"4"}
+{"id":"cnt3","input":"How many times does the letter 'e' appear in 'engineering'?","expected":"3"}

@@ -1,0 +1,44 @@
+export type Split = 'train' | 'val' | 'test';
+
+export interface Task {
+  id: string;
+  input: string;
+  expected: string;
+  split?: Split;
+}
+
+export interface SkillFiles {
+  skillMd: string;
+  purposeMd: string;
+  /** Extra files bundled with the skill (scripts, references), keyed by path relative to the skill directory. */
+  files?: Record<string, string>;
+}
+export type SkillSet = Map<string, SkillFiles>;
+
+export interface Trace {
+  iteration: number;
+  taskId: string;
+  input: string;
+  expected: string;
+  /** Full execution log: reasoning, tool calls and tool outputs when available, then the final reply. */
+  output: string;
+  answer: string | null;
+  correct: boolean;
+}
+
+export type Role = 'infer' | 'wiki' | 'propose';
+
+export interface LlmCall {
+  role: Role;
+  system?: string;
+  prompt: string;
+  /** Claude Code tool specs the call may use, e.g. "Read", "Bash(python3 *)" (empty = none). */
+  tools?: string[];
+  /** Working directory; tools can only see files under it. */
+  cwd?: string;
+}
+/** A reply is the final text, or the final text plus the full execution transcript. */
+export type LlmReply = string | { text: string; transcript: string };
+export type Llm = (call: LlmCall) => Promise<LlmReply>;
+
+export type Scorer = 'exact' | 'contains';

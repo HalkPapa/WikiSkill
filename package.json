@@ -1,0 +1,16 @@
+{
+  "name": "wikiskill",
+  "version": "0.1.0",
+  "description": "Evolve agent skills from execution traces via a persistent wiki (after arXiv:2608.27454)",
+  "type": "module",
+  "bin": { "wikiskill": "dist/src/cli.js" },
+  "scripts": {
+    "build": "tsc",
+    "test": "tsc && node --test dist/test/*.test.js",
+    "evolve": "node dist/src/cli.js evolve"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

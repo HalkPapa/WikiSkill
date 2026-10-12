@@ -1,0 +1,14 @@
+{"id":"t1","split":"train","input":"Generate the internal member ID for: Daisuke Koike, born 1985.","expected":"KOI85D"}
+{"id":"t2","split":"train","input":"Generate the internal member ID for: Emma Watson, born 1990.","expected":"WAT90E"}
+{"id":"t3","split":"train","input":"Generate the internal member ID for: Carlos Mendez, born 1978.","expected":"MEN78C"}
+{"id":"t4","split":"train","input":"Generate the internal member ID for: Yuki Tanaka, born 2001.","expected":"TAN01Y"}
+{"id":"t5","split":"train","input":"Generate the internal member ID for: Olga Petrova, born 1969.","expected":"PET69O"}
+{"id":"t6","split":"train","input":"Generate the internal member ID for: Ben Ng, born 1995.","expected":"NG95B"}
+{"id":"v1","split":"val","input":"Generate the internal member ID for: Sofia Rossi, born 1982.","expected":"ROS82S"}
+{"id":"v2","split":"val","input":"Generate the internal member ID for: Hiro Sato, born 1999.","expected":"SAT99H"}
+{"id":"v3","split":"val","input":"Generate the internal member ID for: Anna Li, born 1975.","expected":"LI75A"}
+{"id":"v4","split":"val","input":"Generate the internal member ID for: Peter Schmidt, born 2005.","expected":"SCH05P"}
+{"id":"x1","split":"test","input":"Generate the internal member ID for: Liam Murphy, born 1988.","expected":"MUR88L"}
+{"id":"x2","split":"test","input":"Generate the internal member ID for: Mei Chen, born 2003.","expected":"CHE03M"}
+{"id":"x3","split":"test","input":"Generate the internal member ID for: Ivan Volkov, born 1971.","expected":"VOL71I"}
+{"id":"x4","split":"test","input":"Generate the internal member ID for: Jo Wu, born 1992.","expected":"WU92J"}
